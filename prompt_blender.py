@@ -9,8 +9,14 @@ Created on Wed Dec 13 22:30:17 2023
 import torch
 
 class PromptBlender:
-    def __init__(self, pipe):
+    def __init__(self, pipe, use_compel=False):
         self.pipe = pipe
+        self.use_compel = use_compel
+        if use_compel:
+            from compel import Compel, ReturnedEmbeddingsType
+            self.compel = Compel(tokenizer=[pipe.tokenizer, pipe.tokenizer_2] , text_encoder=[pipe.text_encoder, pipe.text_encoder_2], returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED, requires_pooled=[False, True])
+
+
 
     @staticmethod
     @torch.no_grad()
@@ -48,26 +54,38 @@ class PromptBlender:
         """
         Encodes a text prompt into embeddings using the model pipeline.
         """
-        (
-         prompt_embeds, 
-         negative_prompt_embeds, 
-         pooled_prompt_embeds, 
-         negative_pooled_prompt_embeds
-         ) = self.pipe.encode_prompt(
-            prompt=prompt,
-            prompt_2=prompt,
-            device="cuda",
-            num_images_per_prompt=1,
-            do_classifier_free_guidance=True,
-            negative_prompt=negative_prompt,
-            negative_prompt_2=negative_prompt,
-            prompt_embeds=None,
-            negative_prompt_embeds=None,
-            pooled_prompt_embeds=None,
-            negative_pooled_prompt_embeds=None,
-            lora_scale=0,
-            clip_skip=False,
-        )
+        if not self.use_compel:
+            (
+             prompt_embeds, 
+             negative_prompt_embeds, 
+             pooled_prompt_embeds, 
+             negative_pooled_prompt_embeds
+             ) = self.pipe.encode_prompt(
+                prompt=prompt,
+                prompt_2=prompt,
+                device="cuda",
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=True,
+                negative_prompt=negative_prompt,
+                negative_prompt_2=negative_prompt,
+                prompt_embeds=None,
+                negative_prompt_embeds=None,
+                pooled_prompt_embeds=None,
+                negative_pooled_prompt_embeds=None,
+                lora_scale=0,
+                clip_skip=False,
+            )
+             
+        else:
+            
+            conditioning, pooled = self.compel([prompt, negative_prompt])
+            
+            prompt_embeds=conditioning[0:1]
+            pooled_prompt_embeds=pooled[0:1]
+            
+            negative_prompt_embeds=conditioning[1:2]
+            negative_pooled_prompt_embeds=pooled[1:2]
+        
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
 
     def blend_prompts(self, embeds1, embeds2, fract):
