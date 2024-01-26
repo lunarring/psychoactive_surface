@@ -7,14 +7,19 @@ Created on Wed Dec 13 22:30:17 2023
 """
 
 import torch
+import numpy as np
+
+@staticmethod
+@torch.no_grad()
+
 
 class PromptBlender:
     def __init__(self, pipe):
         self.pipe = pipe
-
-    @staticmethod
-    @torch.no_grad()
-    def interpolate_spherical(p0, p1, fract_mixing: float):
+        self.fract = 0
+        self.first_fract = 0
+        
+    def interpolate_spherical(self, p0, p1, fract_mixing: float):
         """
         Helper function to correctly mix two random variables using spherical interpolation.
         """
@@ -43,7 +48,7 @@ class PromptBlender:
             interp = interp.float()
 
         return interp
-
+        
     def get_prompt_embeds(self, prompt, negative_prompt=""):
         """
         Encodes a text prompt into embeddings using the model pipeline.
@@ -66,10 +71,51 @@ class PromptBlender:
             pooled_prompt_embeds=None,
             negative_pooled_prompt_embeds=None,
             lora_scale=0,
-            clip_skip=False,
+            clip_skip=False
         )
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
-
+    
+    
+    
+    def get_all_embeddings(self, prompts):
+        
+        prompts_embeds = []
+        for prompt in prompts:
+            prompts_embeds.append(self.get_prompt_embeds(prompt))
+            
+        self.prompts_embeds = prompts_embeds
+    
+        return prompts_embeds
+    
+    def set_init_position(self, index):
+        self.current = [self.prompts_embeds[index][i] for i in range(4)]
+    
+    def set_target(self, index):
+        self.target = [self.prompts_embeds[index][i] for i in range(4)]
+    
+    def step(self, pvelocity):
+        for i in range(4):
+            d = self.target[i] - self.current[i]
+            
+            d_norm = torch.linalg.norm(d)
+            if d_norm > 0:
+                # self.fract = pvelocity / d_norm
+                # self.fract = torch.sqrt(self.fract)
+                self.fract = pvelocity
+                
+                # self.fract = pvelocity
+                if self.fract > 1:
+                    self.fract = 1
+            else:
+                self.fract = 1
+            
+            self.current[i] = self.interpolate_spherical(self.current[i], self.target[i], self.fract)
+            if i == 0:
+                self.first_fract = self.fract
+    
+        
+        
+    
     def blend_prompts(self, embeds1, embeds2, fract):
         """
         Blends two sets of prompt embeddings based on a specified fraction.
@@ -97,6 +143,12 @@ class PromptBlender:
                 blended = self.blend_prompts(prompt_embeds1, prompt_embeds2, fract)
                 blended_prompts.append(blended)
         return blended_prompts
+
+
+#%% unit test promptblend
+
+
+
 
 
 #%% FOR ASYNC INSERTION OF PROMPTS
