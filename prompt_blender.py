@@ -8,10 +8,11 @@ Created on Wed Dec 13 22:30:17 2023
 
 import torch
 import numpy as np
+import random
+import lunar_tools as lt
 
 @staticmethod
 @torch.no_grad()
-
 #%%
 class PromptBlender:
     def __init__(self, pipe, gpu_id=0):
@@ -113,16 +114,70 @@ class PromptBlender:
 
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
     
+
+    def blend_stored_embeddings(self, fract):
+        assert hasattr(self, 'embeds1'), "embeds1 not set. Please set embeds1 before blending."
+        assert hasattr(self, 'embeds2'), "embeds2 not set. Please set embeds2 before blending."
+        fract = max(0, min(fract, 1))
+        self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds = self.blend_prompts(self.embeds1, self.embeds2, fract)
     
-    def get_all_embeddings(self, prompts):
-        
+
+
+    def blend_prompts(self, embeds1, embeds2, fract):
+        """
+        Blends two sets of prompt embeddings based on a specified fraction.
+        """
+        prompt_embeds1, negative_prompt_embeds1, pooled_prompt_embeds1, negative_pooled_prompt_embeds1 = embeds1
+        prompt_embeds2, negative_prompt_embeds2, pooled_prompt_embeds2, negative_pooled_prompt_embeds2 = embeds2
+
+        blended_prompt_embeds = self.interpolate_spherical(prompt_embeds1, prompt_embeds2, fract)
+        blended_negative_prompt_embeds = self.interpolate_spherical(negative_prompt_embeds1, negative_prompt_embeds2, fract)
+        blended_pooled_prompt_embeds = self.interpolate_spherical(pooled_prompt_embeds1, pooled_prompt_embeds2, fract)
+        blended_negative_pooled_prompt_embeds = self.interpolate_spherical(negative_pooled_prompt_embeds1, negative_pooled_prompt_embeds2, fract)
+
+        return blended_prompt_embeds, blended_negative_prompt_embeds, blended_pooled_prompt_embeds, blended_negative_pooled_prompt_embeds
+
+
+    def generate_blended_img(self, fract, latents=None):
+        # Set the embeddings first with blend_stored_embeddings
+        torch.manual_seed(420)
+        fract = np.clip(fract, 0, 1)
+        self.blend_stored_embeddings(fract)
+        # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
+        image = self.pipe(guidance_scale=0.0, num_inference_steps=1, latents=latents, 
+                        prompt_embeds=self.prompt_embeds, negative_prompt_embeds=self.negative_prompt_embeds, 
+                        pooled_prompt_embeds=self.pooled_prompt_embeds, negative_pooled_prompt_embeds=self.negative_pooled_prompt_embeds).images[0]
+        return image
+
+
+    def get_all_embeddings(self, list_prompts):
         prompts_embeds = []
-        for prompt in prompts:
+        for prompt in list_prompts:
             prompts_embeds.append(self.get_prompt_embeds(prompt))
-            
         self.prompts_embeds = prompts_embeds
+        
+    def get_latents(self):
+        self.w = 64
+        self.h = 64 # 50% chance
+        torch.manual_seed(np.random.randint(1111111111111111))
+        return torch.randn((1,4,self.w,self.h)).half().cuda()
     
-        return prompts_embeds
+#% Linear Walker (legacy)
+    def blend_sequence_prompts(self, prompts, n_steps):
+        """
+        Generates a sequence of blended prompt embeddings for a list of text prompts.
+        """
+        blended_prompts = []
+        for i in range(len(prompts) - 1):
+            prompt_embeds1 = self.get_prompt_embeds(prompts[i])
+            prompt_embeds2 = self.get_prompt_embeds(prompts[i + 1])
+            for step in range(n_steps):
+                fract = step / float(n_steps - 1)
+                blended = self.blend_prompts(prompt_embeds1, prompt_embeds2, fract)
+                blended_prompts.append(blended)
+        return blended_prompts
+
+    
     
     def set_init_position(self, index):
         self.current = [self.prompts_embeds[index][i] for i in range(4)]
@@ -150,52 +205,7 @@ class PromptBlender:
             if i == 0:
                 self.first_fract = self.fract
 
-    def blend_stored_embeddings(self, fract):
-        assert hasattr(self, 'embeds1'), "embeds1 not set. Please set embeds1 before blending."
-        assert hasattr(self, 'embeds2'), "embeds2 not set. Please set embeds2 before blending."
-        fract = max(0, min(fract, 1))
-        self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds = self.blend_prompts(self.embeds1, self.embeds2, fract)
-    
-
-
-    def blend_prompts(self, embeds1, embeds2, fract):
-        """
-        Blends two sets of prompt embeddings based on a specified fraction.
-        """
-        prompt_embeds1, negative_prompt_embeds1, pooled_prompt_embeds1, negative_pooled_prompt_embeds1 = embeds1
-        prompt_embeds2, negative_prompt_embeds2, pooled_prompt_embeds2, negative_pooled_prompt_embeds2 = embeds2
-
-        blended_prompt_embeds = self.interpolate_spherical(prompt_embeds1, prompt_embeds2, fract)
-        blended_negative_prompt_embeds = self.interpolate_spherical(negative_prompt_embeds1, negative_prompt_embeds2, fract)
-        blended_pooled_prompt_embeds = self.interpolate_spherical(pooled_prompt_embeds1, pooled_prompt_embeds2, fract)
-        blended_negative_pooled_prompt_embeds = self.interpolate_spherical(negative_pooled_prompt_embeds1, negative_pooled_prompt_embeds2, fract)
-
-        return blended_prompt_embeds, blended_negative_prompt_embeds, blended_pooled_prompt_embeds, blended_negative_pooled_prompt_embeds
-
-    def blend_sequence_prompts(self, prompts, n_steps):
-        """
-        Generates a sequence of blended prompt embeddings for a list of text prompts.
-        """
-        blended_prompts = []
-        for i in range(len(prompts) - 1):
-            prompt_embeds1 = self.get_prompt_embeds(prompts[i])
-            prompt_embeds2 = self.get_prompt_embeds(prompts[i + 1])
-            for step in range(n_steps):
-                fract = step / float(n_steps - 1)
-                blended = self.blend_prompts(prompt_embeds1, prompt_embeds2, fract)
-                blended_prompts.append(blended)
-        return blended_prompts
-
-    def generate_blended_img(self, fract, latents=None):
-        # Set the embeddings first with blend_stored_embeddings
-        torch.manual_seed(420)
-        self.blend_stored_embeddings(fract)
-        # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
-        image = self.pipe(guidance_scale=0.0, num_inference_steps=1, latents=latents, 
-                        prompt_embeds=self.prompt_embeds, negative_prompt_embeds=self.negative_prompt_embeds, 
-                        pooled_prompt_embeds=self.pooled_prompt_embeds, negative_pooled_prompt_embeds=self.negative_pooled_prompt_embeds).images[0]
-        return image
-
+#% TREE (latent blending lpips fract patterning)
     def init_tree(self, img_first=None, img_last=None, latents=None):
         if img_first is None:
             img_first = self.generate_blended_img(0.0, latents)
@@ -270,109 +280,7 @@ class PromptBlender:
         fract_mixing = (fract_closest1 + fract_closest2) / 2
 
         return fract_mixing, b_closest1, b_closest2
-#%% FOR ASYNC INSERTION OF PROMPTS
-    
-class PromptBlenderAsync:
-    def __init__(self, pipe, initial_prompts, n_steps):
-        self.pipe = pipe
-        self.prompts = initial_prompts
-        self.n_steps = n_steps
-        self.blended_prompts = self.blend_sequence_prompts(self.prompts, self.n_steps)
-        
-        
-    def add_prompt(self, new_prompt):
-        """
-        Adds a new prompt to the sequence and updates the blended prompts.
-        """
-        self.prompts.append(new_prompt)
-        self.blended_prompts = self.blend_sequence_prompts(self.prompts, self.n_steps)
 
-    @staticmethod
-    @torch.no_grad()
-    def interpolate_spherical(p0, p1, fract_mixing: float):
-        """
-        Helper function to correctly mix two random variables using spherical interpolation.
-        """
-        if p0.dtype == torch.float16:
-            recast_to = 'fp16'
-        else:
-            recast_to = 'fp32'
-
-        p0 = p0.double()
-        p1 = p1.double()
-        norm = torch.linalg.norm(p0) * torch.linalg.norm(p1)
-        epsilon = 1e-7
-        dot = torch.sum(p0 * p1) / norm
-        dot = dot.clamp(-1 + epsilon, 1 - epsilon)
-
-        theta_0 = torch.arccos(dot)
-        sin_theta_0 = torch.sin(theta_0)
-        theta_t = theta_0 * fract_mixing
-        s0 = torch.sin(theta_0 - theta_t) / sin_theta_0
-        s1 = torch.sin(theta_t) / sin_theta_0
-        interp = p0 * s0 + p1 * s1
-
-        if recast_to == 'fp16':
-            interp = interp.half()
-        elif recast_to == 'fp32':
-            interp = interp.float()
-
-        return interp
-
-    def get_prompt_embeds(self, prompt, negative_prompt=""):
-        """
-        Encodes a text prompt into embeddings using the model pipeline.
-        """
-        (
-         prompt_embeds, 
-         negative_prompt_embeds, 
-         pooled_prompt_embeds, 
-         negative_pooled_prompt_embeds
-         ) = self.pipe.encode_prompt(
-            prompt=prompt,
-            prompt_2=prompt,
-            device="cuda",
-            num_images_per_prompt=1,
-            do_classifier_free_guidance=True,
-            negative_prompt=negative_prompt,
-            negative_prompt_2=negative_prompt,
-            prompt_embeds=None,
-            negative_prompt_embeds=None,
-            pooled_prompt_embeds=None,
-            negative_pooled_prompt_embeds=None,
-            lora_scale=0,
-            clip_skip=False,
-        )
-        return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
-
-    def blend_prompts(self, embeds1, embeds2, fract):
-        """
-        Blends two sets of prompt embeddings based on a specified fraction.
-        """
-        prompt_embeds1, negative_prompt_embeds1, pooled_prompt_embeds1, negative_pooled_prompt_embeds1 = embeds1
-        prompt_embeds2, negative_prompt_embeds2, pooled_prompt_embeds2, negative_pooled_prompt_embeds2 = embeds2
-
-        blended_prompt_embeds = self.interpolate_spherical(prompt_embeds1, prompt_embeds2, fract)
-        blended_negative_prompt_embeds = self.interpolate_spherical(negative_prompt_embeds1, negative_prompt_embeds2, fract)
-        blended_pooled_prompt_embeds = self.interpolate_spherical(pooled_prompt_embeds1, pooled_prompt_embeds2, fract)
-        blended_negative_pooled_prompt_embeds = self.interpolate_spherical(negative_pooled_prompt_embeds1, negative_pooled_prompt_embeds2, fract)
-
-        return blended_prompt_embeds, blended_negative_prompt_embeds, blended_pooled_prompt_embeds, blended_negative_pooled_prompt_embeds
-
-    def blend_sequence_prompts(self, prompts, n_steps):
-        """
-        Generates a sequence of blended prompt embeddings for a list of text prompts.
-        """
-        blended_prompts = []
-        for i in range(len(prompts) - 1):
-            prompt_embeds1 = self.get_prompt_embeds(prompts[i])
-            prompt_embeds2 = self.get_prompt_embeds(prompts[i + 1])
-            for step in range(n_steps):
-                fract = step / float(n_steps - 1)
-                blended = self.blend_prompts(prompt_embeds1, prompt_embeds2, fract)
-                blended_prompts.append(blended)
-        return blended_prompts
-    
     
     
 #%% LPIPS
@@ -399,29 +307,132 @@ if __name__ == "__main__":
 
 #%%
     self = PromptBlender(pipe)
-    self.load_lpips()
-
+    latents = torch.randn((1,4,64,64)).half().cuda()
     self.set_prompt1("photo of a house")
     self.set_prompt2("painting of a cat")
+    img_mix = self.generate_blended_img(0.5, latents)
     
-    latents = torch.randn((1,4,64,64)).half().cuda() # 64 is the fastest
+    akai_lpd8 = lt.MidiInput(device_name="akai_lpd8")
 
-    self.init_tree(latents=latents)
-    
-    
-    #%%
-    nmb_branches = 50
-    for i in range(nmb_branches):
-        fract, b1, b2 = self.get_mixing_parameters()
-        img_mix = self.generate_blended_img(fract, latents)
-        self.insert_into_tree(img_mix, fract)
+
 
 #%%
-    from lunar_tools import MovieSaver
-    ms = MovieSaver("/tmp/test.mp4")
-    for img in self.tree_final_imgs:
-        ms.write_frame(img)
-    ms.finalize()
+    
+    sz = (1024, 1024)
+    renderer = lt.Renderer(width=sz[1], height=sz[0])
+
+    def get_aug_prompt(space_prompt):
+        list_forms = ["photo", "painting", "depiction", "drawing", "sketch", "illustration", 
+        "print", "digital art", "sculpture", "collage", "mural", "tapestry", 
+        "engraving", "mosaic", "watercolor", "charcoal", "pastel", "fresco", 
+        "grafitti", "iconography", "landscape", "portrait", "still life", 
+        "abstract", "figurative", "conceptual art", "performance art", 
+        "installation art", "video art", "animation", "comic", "caricature", 
+        "woodcut", "linocut", "etching", "lithography", "screen print", 
+        "monotype", "dye transfer", "acrylics", "oil painting", "gouache", 
+        "tempera", "ink", "mixed media", "assemblage", "relief", "stained glass", 
+        "textile art", "fiber art", "sand art", "ice sculpture", "metalwork", 
+        "jewelry", "ceramics", "pottery", "glassblowing", "papercraft", "origami", 
+        "calligraphy", "pyrography", "body art", "tattoo", "face painting", 
+        "land art", "environmental art", "light art", "sound art", "kinetic art", 
+        "minature art", "macro photography", "aerial photography", "infrared photography", 
+        "street art", "pop art", "surrealism", "neoclassicism", "romanticism", 
+        "baroque", "renaissance", "modernism", "postmodernism", "cubism", 
+        "fauvism", "expressionism", "art nouveau", "art deco", "vexel art", 
+        "3D modeling", "virtual reality art", "augmented reality art", "algorithmic art", 
+        "neon art", "bio art", "space art"]
+        list_adjectives = [
+            "surreal", "trippy", "mindblowing", "colorful", "vibrant", "elegant", 
+            "gritty", "ethereal", "haunting", "whimsical", "melancholic", "joyful",
+            "dynamic", "static", "muted", "glossy", "matte", "textured", "smooth",
+            "abstract", "figurative", "geometric", "organic", "minimalist", "intricate",
+            "bold", "subtle", "shimmering", "glowing", "opaque", "translucent",
+            "serene", "chaotic", "luminous", "shadowy", "delicate", "robust",
+            "ancient", "modern", "futuristic", "primitive", "timeless", "contemporary",
+            "rustic", "polished", "unrefined", "sophisticated", "naive", "complex",
+            "simplistic", "natural", "synthetic", "realistic", "fantastical", "dreamy",
+            "nightmarish", "peaceful", "aggressive", "passionate", "stoic", "animated",
+            "static", "fluid", "rigid", "airy", "heavy", "light", "dark", "bright",
+            "dim", "saturated", "desaturated", "warm", "cool", "neutral", "spicy",
+            "sweet", "bitter", "harmonious", "contrasting", "monochromatic", "polychromatic",
+            "pastel", "neon", "earthy", "metallic", "pearlescent", "velvety", "silky",
+            "woody", "glassy", "ceramic", "fuzzy", "crisp", "blurry", "sharp",
+            "detailed", "ambiguous", "explicit", "mysterious", "clear", "obscure",
+            "lavish", "sparse", "rich", "poor", "luxurious", "modest"]
+        
+        prompt = space_prompt
+        prompt = prompt.replace("!ADJ", random.choice(list_adjectives))
+        prompt = prompt.replace("!FORM", random.choice(list_forms))
+        
+        return prompt
+    
+    negative_prompt = "blurry, lowres, disfigured"
+    space_prompt = "!FORM of a !ADJ old person in the house"
+    
+    
+    # Run space
+    idx_cycle = 0
+    self.set_prompt1(get_aug_prompt(space_prompt), negative_prompt)
+    latents2 = self.get_latents()
+    
+    while True:
+        # cycle back from target to source
+        latents1 = latents2.clone()
+        self.embeds1 = self.embeds2
+        # get new target
+        latents2 = self.get_latents()
+        self.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
+    
+        fract = 0
+        while fract < 1:
+            d_fract = akai_lpd8.get("E0", val_min=0.005, val_max=0.1)
+            latents_mix = self.interpolate_spherical(latents1, latents2, fract)
+            img_mix = self.generate_blended_img(fract, latents_mix)
+            renderer.render(img_mix)
+            
+            # Inject new space
+            do_inject_new_space = akai_lpd8.get("A0", button_mode="pressed_once")
+            if do_inject_new_space:
+                # recycle old current embeddings and latents
+                self.embeds1 = self.blend_prompts(self.embeds1, self.embeds2, fract)
+                latents1 = self.interpolate_spherical(latents1, latents2, fract)
+                space_prompt = "!FORM of a !ADJ fox in the lake"
+                fract = 0
+                self.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
+            else:
+                fract += d_fract
+                
+        idx_cycle += 1
+
+    
+
+
+
+
+# #%% Latent Blending Test
+#     xxxx
+#     self = PromptBlender(pipe)
+#     self.load_lpips()
+
+#     self.set_prompt1("photo of a house")
+#     self.set_prompt2("painting of a cat")
+    
+#     latents = torch.randn((1,4,64,64)).half().cuda() # 64 is the fastest
+
+#     self.init_tree(latents=latents)
+    
+    
+#     nmb_branches = 50
+#     for i in range(nmb_branches):
+#         fract, b1, b2 = self.get_mixing_parameters()
+#         img_mix = self.generate_blended_img(fract, latents)
+#         self.insert_into_tree(img_mix, fract)
+
+#     from lunar_tools import MovieSaver
+#     ms = MovieSaver("/tmp/test.mp4")
+#     for img in self.tree_final_imgs:
+#         ms.write_frame(img)
+#     ms.finalize()
     
 
 
