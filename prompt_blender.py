@@ -25,6 +25,11 @@ class PromptBlender:
         self.guidance_scale = 0.0
         self.device = "cuda"
 
+        self.tree_final_imgs = None
+        self.tree_fracts = None
+        self.tree_similarities = None
+        self.tree_insertion_idx = None
+
     def load_lpips(self):
         import lpips
         self.lpips = lpips.LPIPS(net='alex').cuda(self.gpu_id)
@@ -181,15 +186,26 @@ class PromptBlender:
                 blended_prompts.append(blended)
         return blended_prompts
 
-    def generate_blended_img(self, fract):
+    def generate_blended_img(self, fract, latents=None):
         # Set the embeddings first with blend_stored_embeddings
         torch.manual_seed(420)
         self.blend_stored_embeddings(fract)
         # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
-        image = self.pipe(guidance_scale=0.0, num_inference_steps=1, latents=None, 
+        image = self.pipe(guidance_scale=0.0, num_inference_steps=1, latents=latents, 
                         prompt_embeds=self.prompt_embeds, negative_prompt_embeds=self.negative_prompt_embeds, 
                         pooled_prompt_embeds=self.pooled_prompt_embeds, negative_pooled_prompt_embeds=self.negative_pooled_prompt_embeds).images[0]
         return image
+
+    def init_tree(self, img_first=None, img_last=None, latents=None):
+        if img_first is None:
+            img_first = self.generate_blended_img(0.0, latents)
+        if img_last is None:
+            img_last = self.generate_blended_img(1.0, latents)
+        self.tree_final_imgs = [img_first, img_last]
+        self.tree_fracts = [0.0, 1.0]
+        self.tree_similarities = [self.get_lpips_similarity(img_first, img_last)]
+        self.tree_insertion_idx = [0, 0]
+
 
     def insert_into_tree(self, img_insert, fract_mixing):
         r"""
@@ -205,6 +221,8 @@ class PromptBlender:
         idx_insert = b_parent1 + 1
         self.tree_final_imgs.insert(idx_insert, img_insert)
         self.tree_fracts.insert(idx_insert, fract_mixing)
+        idx_max = np.max(self.tree_insertion_idx) + 1
+        self.tree_insertion_idx.insert(idx_insert, idx_max)
         
         # update similarities
         self.tree_similarities[b_parent1] = left_sim
@@ -362,7 +380,7 @@ if __name__ == "__main__":
     from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
     from diffusers import AutoencoderTiny
 
-    do_compile = True
+    do_compile = False
 
     pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
     pipe.to("cuda")
@@ -379,6 +397,7 @@ if __name__ == "__main__":
         config.enable_cuda_graph = True
         pipe = compile(pipe, config)
 
+#%%
     self = PromptBlender(pipe)
     self.load_lpips()
 
@@ -387,21 +406,18 @@ if __name__ == "__main__":
     
     latents = torch.randn((1,4,64,64)).half().cuda() # 64 is the fastest
 
-    self.tree_final_imgs = []
-    self.tree_fracts = [0.0, 1.0]
-    self.tree_final_imgs.append(self.generate_blended_img(0.0))
-    self.tree_final_imgs.append(self.generate_blended_img(1.0))
-    self.tree_similarities = [self.get_lpips_similarity(self.tree_final_imgs[0], self.tree_final_imgs[1])]
+    self.init_tree(latents=latents)
+    
     
     #%%
-    nmb_branches = 100
+    nmb_branches = 50
     for i in range(nmb_branches):
         fract, b1, b2 = self.get_mixing_parameters()
-        img_mix = self.generate_blended_img(fract)
+        img_mix = self.generate_blended_img(fract, latents)
         self.insert_into_tree(img_mix, fract)
 
-    from lunar_tools import MovieSaver
 #%%
+    from lunar_tools import MovieSaver
     ms = MovieSaver("/tmp/test.mp4")
     for img in self.tree_final_imgs:
         ms.write_frame(img)
