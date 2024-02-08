@@ -24,7 +24,6 @@ class PromptBlender:
         self.num_inference_steps = 1
         self.guidance_scale = 0.0
         self.device = "cuda"
-
         self.tree_final_imgs = None
         self.tree_fracts = None
         self.tree_similarities = None
@@ -111,6 +110,7 @@ class PromptBlender:
             lora_scale=0,
             clip_skip=False
         )
+
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
     
     
