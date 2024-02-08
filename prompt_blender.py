@@ -12,12 +12,38 @@ import numpy as np
 @staticmethod
 @torch.no_grad()
 
-
+#%%
 class PromptBlender:
-    def __init__(self, pipe):
+    def __init__(self, pipe, gpu_id=0):
         self.pipe = pipe
         self.fract = 0
         self.first_fract = 0
+        self.gpu_id = gpu_id
+        self.embeds1 = None
+        self.embeds2 = None
+        self.num_inference_steps = 1
+        self.guidance_scale = 0.0
+        self.device = "cuda"
+
+    def load_lpips(self):
+        import lpips
+        self.lpips = lpips.LPIPS(net='alex').cuda(self.gpu_id)
+
+    def get_lpips_similarity(self, imgA, imgB):
+        r"""
+        Computes the image similarity between two images imgA and imgB.
+        Used to determine the optimal point of insertion to create smooth transitions.
+        High values indicate low similarity.
+        """
+        tensorA = torch.from_numpy(np.asarray(imgA)).float().cuda(self.device)
+        tensorA = 2 * tensorA / 255.0 - 1
+        tensorA = tensorA.permute([2, 0, 1]).unsqueeze(0)
+        tensorB = torch.from_numpy(np.asarray(imgB)).float().cuda(self.device)
+        tensorB = 2 * tensorB / 255.0 - 1
+        tensorB = tensorB.permute([2, 0, 1]).unsqueeze(0)
+        lploss = self.lpips(tensorA, tensorB)
+        lploss = float(lploss[0][0][0][0])
+        return lploss
         
     def interpolate_spherical(self, p0, p1, fract_mixing: float):
         """
@@ -49,6 +75,13 @@ class PromptBlender:
 
         return interp
         
+    def set_prompt1(self, prompt, negative_prompt=""):
+        self.embeds1 = self.get_prompt_embeds(prompt, negative_prompt)
+    
+    def set_prompt2(self, prompt, negative_prompt=""):
+        self.embeds2 = self.get_prompt_embeds(prompt, negative_prompt)
+
+
     def get_prompt_embeds(self, prompt, negative_prompt=""):
         """
         Encodes a text prompt into embeddings using the model pipeline.
@@ -61,7 +94,7 @@ class PromptBlender:
          ) = self.pipe.encode_prompt(
             prompt=prompt,
             prompt_2=prompt,
-            device="cuda",
+            device=f"cuda:{self.gpu_id}",
             num_images_per_prompt=1,
             do_classifier_free_guidance=True,
             negative_prompt=negative_prompt,
@@ -74,7 +107,6 @@ class PromptBlender:
             clip_skip=False
         )
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
-    
     
     
     def get_all_embeddings(self, prompts):
@@ -112,10 +144,15 @@ class PromptBlender:
             self.current[i] = self.interpolate_spherical(self.current[i], self.target[i], self.fract)
             if i == 0:
                 self.first_fract = self.fract
+
+    def blend_stored_embeddings(self, fract):
+        assert hasattr(self, 'embeds1'), "embeds1 not set. Please set embeds1 before blending."
+        assert hasattr(self, 'embeds2'), "embeds2 not set. Please set embeds2 before blending."
+        fract = max(0, min(fract, 1))
+        self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds = self.blend_prompts(self.embeds1, self.embeds2, fract)
     
-        
-        
-    
+
+
     def blend_prompts(self, embeds1, embeds2, fract):
         """
         Blends two sets of prompt embeddings based on a specified fraction.
@@ -144,13 +181,77 @@ class PromptBlender:
                 blended_prompts.append(blended)
         return blended_prompts
 
+    def generate_blended_img(self, fract):
+        # Set the embeddings first with blend_stored_embeddings
+        torch.manual_seed(420)
+        self.blend_stored_embeddings(fract)
+        # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
+        image = self.pipe(guidance_scale=0.0, num_inference_steps=1, latents=None, 
+                        prompt_embeds=self.prompt_embeds, negative_prompt_embeds=self.negative_prompt_embeds, 
+                        pooled_prompt_embeds=self.pooled_prompt_embeds, negative_pooled_prompt_embeds=self.negative_pooled_prompt_embeds).images[0]
+        return image
 
-#%% unit test promptblend
+    def insert_into_tree(self, img_insert, fract_mixing):
+        r"""
+        Inserts all necessary parameters into the trajectory tree.
+        Args:
+            fract_mixing: float
+                the fraction along the transition axis [0, 1]
+        """
+        
+        b_parent1, b_parent2 = self.get_closest_idx(fract_mixing)
+        left_sim = self.get_lpips_similarity(img_insert, self.tree_final_imgs[b_parent1])
+        right_sim = self.get_lpips_similarity(img_insert, self.tree_final_imgs[b_parent2])
+        idx_insert = b_parent1 + 1
+        self.tree_final_imgs.insert(idx_insert, img_insert)
+        self.tree_fracts.insert(idx_insert, fract_mixing)
+        
+        # update similarities
+        self.tree_similarities[b_parent1] = left_sim
+        self.tree_similarities.insert(idx_insert, right_sim)
 
 
+    # Auxiliary functions
+    def get_closest_idx(
+            self,
+            fract_mixing: float):
+        r"""
+        Helper function to retrieve the parents for any given mixing.
+        Example: fract_mixing = 0.4 and self.tree_fracts = [0, 0.3, 0.6, 1.0]
+        Will return the two closest values here, i.e. [1, 2]
+        """
 
+        pdist = fract_mixing - np.asarray(self.tree_fracts)
+        pdist_pos = pdist.copy()
+        pdist_pos[pdist_pos < 0] = np.inf
+        b_parent1 = np.argmin(pdist_pos)
+        pdist_neg = -pdist.copy()
+        pdist_neg[pdist_neg <= 0] = np.inf
+        b_parent2 = np.argmin(pdist_neg)
 
+        if b_parent1 > b_parent2:
+            tmp = b_parent2
+            b_parent2 = b_parent1
+            b_parent1 = tmp
 
+        return b_parent1, b_parent2
+
+    def get_mixing_parameters(self):
+        r"""
+        Computes which parental latents should be mixed together to achieve a smooth blend.
+        As metric, we are using lpips image similarity. The insertion takes place
+        where the metric is maximal.
+        """
+        # get_lpips_similarity
+        similarities = self.tree_similarities
+        # similarities = self.get_tree_similarities()
+        b_closest1 = np.argmax(similarities)
+        b_closest2 = b_closest1 + 1
+        fract_closest1 = self.tree_fracts[b_closest1]
+        fract_closest2 = self.tree_fracts[b_closest2]
+        fract_mixing = (fract_closest1 + fract_closest2) / 2
+
+        return fract_mixing, b_closest1, b_closest2
 #%% FOR ASYNC INSERTION OF PROMPTS
     
 class PromptBlenderAsync:
@@ -255,4 +356,58 @@ class PromptBlenderAsync:
         return blended_prompts
     
     
+    
+#%% LPIPS
+if __name__ == "__main__":
+    from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
+    from diffusers import AutoencoderTiny
+
+    do_compile = True
+
+    pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
+    pipe.to("cuda")
+    pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
+    pipe.vae = pipe.vae.cuda()
+    pipe.set_progress_bar_config(disable=True)
+    
+    if do_compile:
+        from sfast.compilers.diffusion_pipeline_compiler import (compile, CompilationConfig)
+        pipe.enable_xformers_memory_efficient_attention()
+        config = CompilationConfig.Default()
+        config.enable_xformers = True
+        config.enable_triton = True
+        config.enable_cuda_graph = True
+        pipe = compile(pipe, config)
+
+    self = PromptBlender(pipe)
+    self.load_lpips()
+
+    self.set_prompt1("photo of a house")
+    self.set_prompt2("painting of a cat")
+    
+    latents = torch.randn((1,4,64,64)).half().cuda() # 64 is the fastest
+
+    self.tree_final_imgs = []
+    self.tree_fracts = [0.0, 1.0]
+    self.tree_final_imgs.append(self.generate_blended_img(0.0))
+    self.tree_final_imgs.append(self.generate_blended_img(1.0))
+    self.tree_similarities = [self.get_lpips_similarity(self.tree_final_imgs[0], self.tree_final_imgs[1])]
+    
+    #%%
+    nmb_branches = 100
+    for i in range(nmb_branches):
+        fract, b1, b2 = self.get_mixing_parameters()
+        img_mix = self.generate_blended_img(fract)
+        self.insert_into_tree(img_mix, fract)
+
+    from lunar_tools import MovieSaver
+#%%
+    ms = MovieSaver("/tmp/test.mp4")
+    for img in self.tree_final_imgs:
+        ms.write_frame(img)
+    ms.finalize()
+    
+
+
+
     
