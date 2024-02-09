@@ -29,6 +29,8 @@ class PromptBlender:
         self.tree_fracts = None
         self.tree_similarities = None
         self.tree_insertion_idx = None
+        self.w = 64
+        self.h = 64
 
     def load_lpips(self):
         import lpips
@@ -157,10 +159,8 @@ class PromptBlender:
         self.prompts_embeds = prompts_embeds
         
     def get_latents(self):
-        self.w = 64
-        self.h = 64 # 50% chance
         torch.manual_seed(np.random.randint(1111111111111111))
-        return torch.randn((1,4,self.w,self.h)).half().cuda()
+        return torch.randn((1,4,self.h,self.w)).half().cuda()
     
 #% Linear Walker (legacy)
     def blend_sequence_prompts(self, prompts, n_steps):
@@ -368,7 +368,6 @@ if __name__ == "__main__":
     
     negative_prompt = "blurry, lowres, disfigured"
     space_prompt = "!FORM of a !ADJ old person in the house"
-    
     
     # Run space
     idx_cycle = 0
