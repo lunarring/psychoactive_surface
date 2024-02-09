@@ -45,11 +45,11 @@ class GridRenderer():
         :return: NumPy array of shape MxNxHxW*C
         """        
         
-        grid_input = np.zeros((M,N,sz[0],sz[1],3))
-        for m in range(M):
-            for n in range(N):
-                if m*N + n < len(list_images):
-                    grid_input[m,n,:,:,:] = list_images[m*N + n]
+        grid_input = np.zeros((self.M, self.N, self.H, self.W, 3))
+        for m in range(self.M):
+            for n in range(self.N):
+                if m*self.N + n < len(list_images):
+                    grid_input[m,n,:,:,:] = list_images[m*self.N + n]
         return grid_input        
 
     def render(self):
