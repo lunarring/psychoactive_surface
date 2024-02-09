@@ -10,6 +10,7 @@ import torch
 import numpy as np
 import random
 import lunar_tools as lt
+import time
 
 @staticmethod
 @torch.no_grad()
@@ -29,6 +30,7 @@ class PromptBlender:
         self.tree_fracts = None
         self.tree_similarities = None
         self.tree_insertion_idx = None
+        self.num_inference_steps = 1
 
     def load_lpips(self):
         import lpips
@@ -144,7 +146,7 @@ class PromptBlender:
         fract = np.clip(fract, 0, 1)
         self.blend_stored_embeddings(fract)
         # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
-        image = self.pipe(guidance_scale=0.0, num_inference_steps=1, latents=latents, 
+        image = self.pipe(guidance_scale=0.0, num_inference_steps=self.num_inference_steps, latents=latents, 
                         prompt_embeds=self.prompt_embeds, negative_prompt_embeds=self.negative_prompt_embeds, 
                         pooled_prompt_embeds=self.pooled_prompt_embeds, negative_pooled_prompt_embeds=self.negative_pooled_prompt_embeds).images[0]
         return image
@@ -156,10 +158,12 @@ class PromptBlender:
             prompts_embeds.append(self.get_prompt_embeds(prompt))
         self.prompts_embeds = prompts_embeds
         
-    def get_latents(self):
+    def get_latents(self, seed=None):
         self.w = 64
         self.h = 64 # 50% chance
-        torch.manual_seed(np.random.randint(1111111111111111))
+        if seed is None:
+            seed = np.random.randint(1111111111111111)
+        torch.manual_seed(seed)
         return torch.randn((1,4,self.w,self.h)).half().cuda()
     
 #% Linear Walker (legacy)
@@ -288,12 +292,12 @@ if __name__ == "__main__":
     from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
     from diffusers import AutoencoderTiny
 
-    do_compile = False
+    do_compile = True
 
     pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
     pipe.to("cuda")
-    pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
-    pipe.vae = pipe.vae.cuda()
+    # pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
+    # pipe.vae = pipe.vae.cuda()
     pipe.set_progress_bar_config(disable=True)
     
     if do_compile:
@@ -311,7 +315,7 @@ if __name__ == "__main__":
     self.set_prompt1("photo of a house")
     self.set_prompt2("painting of a cat")
     img_mix = self.generate_blended_img(0.5, latents)
-    
+    self.num_inference_steps = 2
     akai_lpd8 = lt.MidiInput(device_name="akai_lpd8")
 
 
@@ -367,13 +371,15 @@ if __name__ == "__main__":
         return prompt
     
     negative_prompt = "blurry, lowres, disfigured"
-    space_prompt = "!FORM of a !ADJ old person in the house"
+    space_prompt = "!FORM of a !ADJ disturbing forest"
     
     
     # Run space
     idx_cycle = 0
     self.set_prompt1(get_aug_prompt(space_prompt), negative_prompt)
     latents2 = self.get_latents()
+    
+    t0 = time.time()
     
     while True:
         # cycle back from target to source
@@ -385,7 +391,8 @@ if __name__ == "__main__":
     
         fract = 0
         while fract < 1:
-            d_fract = akai_lpd8.get("E0", val_min=0.005, val_max=0.1)
+            t0 = time.time()
+            d_fract = akai_lpd8.get("E0", val_min=0.00005, val_max=0.01)
             latents_mix = self.interpolate_spherical(latents1, latents2, fract)
             img_mix = self.generate_blended_img(fract, latents_mix)
             renderer.render(img_mix)
@@ -401,7 +408,10 @@ if __name__ == "__main__":
                 self.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
             else:
                 fract += d_fract
-                
+            
+            dt = time.time() - t0
+            print(f"fps: {1/dt}")
+            
         idx_cycle += 1
 
     
