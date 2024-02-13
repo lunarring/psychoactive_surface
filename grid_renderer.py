@@ -1,75 +1,6 @@
 import numpy as np
 import lunar_tools as lt
 
-class GridRenderer():
-    def __init__(self, nmb_rows, nmb_cols, shape_hw):
-        """
-                       nmb_rows: Number of tiles in vertical direction
-                       nmb_cols: Number of tiles in horizontal direction
-                       shape_hw: (H,W) = tuple (height,width)
-        """
-        
-        self.H = shape_hw[0]
-        self.W = shape_hw[1]
-        self.nmb_rows = nmb_rows
-        self.nmb_cols = nmb_cols
-        self.canvas = np.zeros((nmb_rows, nmb_cols, shape_hw[0], shape_hw[1], 3))
-        
-        self.renderer = lt.Renderer(width=shape_hw[1]*nmb_cols, height=shape_hw[0]*nmb_rows)
-        
-    def inject_tiles(self, tiles):
-        """
-        Concatenate image tiles into one large canvas.
-    
-        :param tiles: NumPy array of shape nmb_rowsxnmb_colsxHxW*C
-                       nmb_rows: Number of tiles in vertical direction
-                       nmb_cols: Number of tiles in horizontal direction
-                       H: Height of each tile
-                       W: Width of each tile
-                       C: Number of RGB channels
-        :return: NumPy array representing the large canvas with shape (nmb_rows*H)x(nmb_cols*W)
-        """
-        nmb_rows, nmb_cols, H, W, C = tiles.shape
-        fail_msg = 'GridRenderer->inject_tiles: tiles shape inconsistent with initialization'
-        assert (nmb_rows == self.nmb_rows) and (nmb_cols == self.nmb_cols), print(fail_msg)
-        assert (H == self.H) and (W == self.W), print(fail_msg)
-        
-        # Reshape and transpose to bring tiles next to each other
-        self.canvas = tiles.transpose(0, 2, 1, 3, 4).reshape(nmb_rows*H, nmb_cols*W, C)
-        
-    def list_to_tensor(self, list_images):
-        """
-        Reshape image tiles from list to tensor.
-    
-        :param list_images: list of images of shape H*W*3
-        :return: NumPy array of shape nmb_rowsxnmb_colsxHxW*C
-        """        
-        
-        grid_input = np.zeros((self.nmb_rows, self.nmb_cols, self.H, self.W, 3))
-        for m in range(self.nmb_rows):
-            for n in range(self.nmb_cols):
-                if m*self.nmb_cols + n < len(list_images):
-                    grid_input[m,n,:,:,:] = list_images[m*self.nmb_cols + n]
-        return grid_input        
-
-    def render(self):
-        """
-        Render canvas abd find the index of the tile given a mouse click pixel coordinate on the 2D canvas.
-        :return: A tuple (m, n) representing the tile index in the range (0..nmb_rows, 0..nmb_cols).
-        """
-        
-        peripheralEvent = self.renderer.render(self.canvas)
-        
-        if peripheralEvent.mouse_button_state > 0:
-            x = peripheralEvent.mouse_posX
-            y = peripheralEvent.mouse_posY
-            
-            m = y // self.H
-            n = x // self.W
-            return m, n
-        else:
-            return -1, -1
-        
 
 if __name__ == '__main__':
     # Get list of prompts
@@ -118,11 +49,10 @@ if __name__ == '__main__':
         list_imgs.append(np.asarray(img_tile))
         list_prompts.append(list_prompts_all[i])
     
-    gridrenderer = GridRenderer(nmb_rows,nmb_cols,shape_hw)
+    gridrenderer = lt.GridRenderer(nmb_rows,nmb_cols,shape_hw)
     secondary_renderer = lt.Renderer(width=1024, height=512, backend='opencv')
     
-    grid_input = gridrenderer.list_to_tensor(list_imgs)
-    gridrenderer.inject_tiles(grid_input)
+    gridrenderer.update(list_imgs)
     
     #%%#
     def get_aug_prompt(prompt):
