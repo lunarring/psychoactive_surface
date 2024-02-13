@@ -13,6 +13,7 @@ from threading import Thread
 import time
 from datetime import datetime
 from PIL import Image
+import lunar_tools as lt
 
 #%% Parameters
 hf_dataset = "FredZhang7/stable-diffusion-prompts-2.47M"
@@ -49,6 +50,7 @@ keyb = lt.KeyboardInput()
 
 
 #%%
+
 class PageGenerator:
     def __init__(self, dataset, pipe, gridrenderer, nmb_images, width_diffusion, height_diffusion, width_show, height_show, num_inference_steps, nmb_max_precompute=2000):
         self.dataset = dataset
@@ -89,9 +91,13 @@ class PageGenerator:
         self.precompute_thread.start()
 
     def next_page(self):
-        indices = random.sample(range(len(self.list_precomputed)), min(len(self.list_precomputed), self.nmb_images))
-        self.selected_images = [self.list_precomputed[i] for i in indices]
-        self.selected_prompts = [self.prompts_precomputed[i] for i in indices]
+        indices = random.sample(range(len(self.list_precomputed)), min(len(self.list_precomputed), self.nmb_images - 1))  # Adjust for the white tile
+        img_white = Image.new('RGB', (self.width_show, self.height_show), 'white')
+        img_white = lt.add_text_to_image(img_white, "click for next page", font_name="ubuntu/Ubuntu-C", min_width=0.7)
+        self.selected_images = [img_white]  # Start with a white tile
+        self.selected_prompts = ["Next Page"]  # Placeholder prompt for the white tile
+        self.selected_images.extend([self.list_precomputed[i] for i in indices])
+        self.selected_prompts.extend([self.prompts_precomputed[i] for i in indices])
         # Remove selected images and prompts from precomputed lists
         for index in sorted(indices, reverse=True):
             del self.list_precomputed[index]
@@ -134,18 +140,12 @@ while True:
     m, n = pg.gridrenderer.render()
     if m != -1 and n != -1:
         idx = m * nmb_cols + n
-        if idx < len(pg.selected_prompts):
+        if idx == 0:  # Special case for the white tile
+            pg.next_page()
+        elif idx < len(pg.selected_prompts):
             print(f'tile index: m {m} n {n} prompt {pg.selected_prompts[idx]}')
             pg.save_selected_prompt(idx)
             pg.blend_with_green(m, n)  # Added functionality to blend selected field with green
     switch_to_next = keyb.get('n', button_mode='pressed_once')
     if switch_to_next:
         pg.next_page()
-        
-
-
-# 5. have selection process for good ones (mb not gradio, but lunar_renderer)
-
-# 6. save results (idx and prompt)
-
-# go back to 2.

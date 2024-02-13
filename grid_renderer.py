@@ -4,8 +4,8 @@ import lunar_tools as lt
 class GridRenderer():
     def __init__(self, nmb_rows, nmb_cols, shape_hw):
         """
-                       M: Number of tiles in vertical direction
-                       N: Number of tiles in horizontal direction
+                       nmb_rows: Number of tiles in vertical direction
+                       nmb_cols: Number of tiles in horizontal direction
                        shape_hw: (H,W) = tuple (height,width)
         """
         
@@ -15,34 +15,34 @@ class GridRenderer():
         self.nmb_cols = nmb_cols
         self.canvas = np.zeros((nmb_rows, nmb_cols, shape_hw[0], shape_hw[1], 3))
         
-        self.renderer = lt.Renderer(width=shape_hw[1]*N, height=shape_hw[0]*M)
+        self.renderer = lt.Renderer(width=shape_hw[1]*nmb_cols, height=shape_hw[0]*nmb_rows)
         
     def inject_tiles(self, tiles):
         """
         Concatenate image tiles into one large canvas.
     
-        :param tiles: NumPy array of shape MxNxHxW*C
-                       M: Number of tiles in vertical direction
-                       N: Number of tiles in horizontal direction
+        :param tiles: NumPy array of shape nmb_rowsxnmb_colsxHxW*C
+                       nmb_rows: Number of tiles in vertical direction
+                       nmb_cols: Number of tiles in horizontal direction
                        H: Height of each tile
                        W: Width of each tile
                        C: Number of RGB channels
-        :return: NumPy array representing the large canvas with shape (M*H)x(N*W)
+        :return: NumPy array representing the large canvas with shape (nmb_rows*H)x(nmb_cols*W)
         """
-        M, N, H, W, C = tiles.shape
+        nmb_rows, nmb_cols, H, W, C = tiles.shape
         fail_msg = 'GridRenderer->inject_tiles: tiles shape inconsistent with initialization'
-        assert (M == self.nmb_rows) and (N == self.nmb_cols), print(fail_msg)
+        assert (nmb_rows == self.nmb_rows) and (nmb_cols == self.nmb_cols), print(fail_msg)
         assert (H == self.H) and (W == self.W), print(fail_msg)
         
         # Reshape and transpose to bring tiles next to each other
-        self.canvas = tiles.transpose(0, 2, 1, 3, 4).reshape(M*H, N*W, C)
+        self.canvas = tiles.transpose(0, 2, 1, 3, 4).reshape(nmb_rows*H, nmb_cols*W, C)
         
     def list_to_tensor(self, list_images):
         """
         Reshape image tiles from list to tensor.
     
         :param list_images: list of images of shape H*W*3
-        :return: NumPy array of shape MxNxHxW*C
+        :return: NumPy array of shape nmb_rowsxnmb_colsxHxW*C
         """        
         
         grid_input = np.zeros((self.nmb_rows, self.nmb_cols, self.H, self.W, 3))
@@ -55,7 +55,7 @@ class GridRenderer():
     def render(self):
         """
         Render canvas abd find the index of the tile given a mouse click pixel coordinate on the 2D canvas.
-        :return: A tuple (m, n) representing the tile index in the range (0..M, 0..N).
+        :return: A tuple (m, n) representing the tile index in the range (0..nmb_rows, 0..nmb_cols).
         """
         
         peripheralEvent = self.renderer.render(self.canvas)
@@ -73,12 +73,12 @@ class GridRenderer():
 
 if __name__ == '__main__':
     # Get list of prompts
-    M,N = (4,8)       # number of tiles
+    nmb_rows,nmb_cols = (4,8)       # number of tiles
     from datasets import load_dataset
     import random
     dataset = load_dataset("FredZhang7/stable-diffusion-prompts-2.47M")
     
-    list_prompts_all = [random.choice(dataset['train'])['text'] for i in range(M*N)]
+    list_prompts_all = [random.choice(dataset['train'])['text'] for i in range(nmb_rows*nmb_cols)]
     
     # Convert to images
     shape_hw = (128, 256)   # image size
@@ -110,7 +110,7 @@ if __name__ == '__main__':
 
     list_imgs = []
     list_prompts = []
-    for i in tqdm(range(M*N)):
+    for i in tqdm(range(nmb_rows*nmb_cols)):
         pb.set_prompt1(list_prompts_all[i])
         pb.set_prompt2(list_prompts_all[i])
         img = pb.generate_blended_img(0.0, latents)
@@ -118,7 +118,7 @@ if __name__ == '__main__':
         list_imgs.append(np.asarray(img_tile))
         list_prompts.append(list_prompts_all[i])
     
-    gridrenderer = GridRenderer(M,N,shape_hw)
+    gridrenderer = GridRenderer(nmb_rows,nmb_cols,shape_hw)
     secondary_renderer = lt.Renderer(width=1024, height=512, backend='opencv')
     
     grid_input = gridrenderer.list_to_tensor(list_imgs)
@@ -154,7 +154,7 @@ if __name__ == '__main__':
             # Inject new space
             m,n = gridrenderer.render()
             if m != -1 and n != -1:
-                idx = m*N + n
+                idx = m*nmb_cols + n
                 print(f'tile index: m {m} n {n} prompt {list_prompts[idx]}')
                 
                 # recycle old current embeddings and latents
