@@ -2,20 +2,20 @@ import numpy as np
 import lunar_tools as lt
 
 class GridRenderer():
-    def __init__(self, M, N, sz):
+    def __init__(self, nmb_rows, nmb_cols, shape_hw):
         """
                        M: Number of tiles in vertical direction
                        N: Number of tiles in horizontal direction
-                       sz: (H,W) = tuple (height,width)
+                       shape_hw: (H,W) = tuple (height,width)
         """
         
-        self.H = sz[0]
-        self.W = sz[1]
-        self.M = M
-        self.N = N
-        self.canvas = np.zeros((M,N,sz[0],sz[1],3))
+        self.H = shape_hw[0]
+        self.W = shape_hw[1]
+        self.nmb_rows = nmb_rows
+        self.nmb_cols = nmb_cols
+        self.canvas = np.zeros((M,N,shape_hw[0],shape_hw[1],3))
         
-        self.renderer = lt.Renderer(width=sz[1]*N, height=sz[0]*M)
+        self.renderer = lt.Renderer(width=shape_hw[1]*N, height=shape_hw[0]*M)
         
     def inject_tiles(self, tiles):
         """
@@ -31,7 +31,7 @@ class GridRenderer():
         """
         M, N, H, W, C = tiles.shape
         fail_msg = 'GridRenderer->inject_tiles: tiles shape inconsistent with initialization'
-        assert (M == self.M) and (N == self.N), print(fail_msg)
+        assert (M == self.nmb_rows) and (N == self.nmb_cols), print(fail_msg)
         assert (H == self.H) and (W == self.W), print(fail_msg)
         
         # Reshape and transpose to bring tiles next to each other
@@ -45,11 +45,11 @@ class GridRenderer():
         :return: NumPy array of shape MxNxHxW*C
         """        
         
-        grid_input = np.zeros((self.M, self.N, self.H, self.W, 3))
-        for m in range(self.M):
-            for n in range(self.N):
-                if m*self.N + n < len(list_images):
-                    grid_input[m,n,:,:,:] = list_images[m*self.N + n]
+        grid_input = np.zeros((self.nmb_rows, self.nmb_cols, self.H, self.W, 3))
+        for m in range(self.nmb_rows):
+            for n in range(self.nmb_cols):
+                if m*self.nmb_cols + n < len(list_images):
+                    grid_input[m,n,:,:,:] = list_images[m*self.nmb_cols + n]
         return grid_input        
 
     def render(self):
@@ -81,7 +81,7 @@ if __name__ == '__main__':
     list_prompts_all = [random.choice(dataset['train'])['text'] for i in range(M*N)]
     
     # Convert to images
-    sz = (128, 256)   # image size
+    shape_hw = (128, 256)   # image size
     from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
     from diffusers import AutoencoderTiny
     import torch
@@ -114,11 +114,11 @@ if __name__ == '__main__':
         pb.set_prompt1(list_prompts_all[i])
         pb.set_prompt2(list_prompts_all[i])
         img = pb.generate_blended_img(0.0, latents)
-        img_tile = img.resize(sz[::-1])
+        img_tile = img.resize(shape_hw[::-1])
         list_imgs.append(np.asarray(img_tile))
         list_prompts.append(list_prompts_all[i])
     
-    gridrenderer = GridRenderer(M,N,sz)
+    gridrenderer = GridRenderer(M,N,shape_hw)
     secondary_renderer = lt.Renderer(width=1024, height=512, backend='opencv')
     
     grid_input = gridrenderer.list_to_tensor(list_imgs)
