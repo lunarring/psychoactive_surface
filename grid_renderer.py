@@ -13,7 +13,7 @@ class GridRenderer():
         self.W = shape_hw[1]
         self.nmb_rows = nmb_rows
         self.nmb_cols = nmb_cols
-        self.canvas = np.zeros((M,N,shape_hw[0],shape_hw[1],3))
+        self.canvas = np.zeros((nmb_rows, nmb_cols, shape_hw[0], shape_hw[1], 3))
         
         self.renderer = lt.Renderer(width=shape_hw[1]*N, height=shape_hw[0]*M)
         
