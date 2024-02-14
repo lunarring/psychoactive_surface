@@ -10,13 +10,84 @@ import os, sys
 import numpy as np
 import torch
 
-dp_git = os.path.join(os.path.dirname(os.path.realpath(__file__)).split("git")[0]+"git")
-sys.path.append(os.path.join(dp_git,'garden4'))
-
-import general as gs
-from u_torch import torch_resample, torch_resize, GaussianSmoothing, tshow, apply_kernel_lowres, apply_kernel, get_kernel_cdiff, get_kernel_gauss, get_kernel, get_cartesian_resample_grid
+from torch.nn import functional as F
 
 #%%
+
+def get_kernel(kernel_weights, gpu=None):
+    assert gpu is not None, "pythoniac maniac gpuiac"
+    assert len(kernel_weights.shape) == 2, '2D conv!'
+    assert kernel_weights.shape[0] == kernel_weights.shape[1], 'square!'
+    padding = int((kernel_weights.shape[0]-1) / 2)
+    m = torch.nn.Conv2d(1, 1, kernel_weights.shape[0], padding=padding, stride=1)
+    m.bias[0] = 0
+    m.weight[0,0,:,:] = torch.from_numpy(kernel_weights.astype(np.float32))
+    m = m.cuda(gpu)
+    return m
+
+def get_kernel_gauss(ksize=3, gpu=None):
+    x, y = np.meshgrid(np.linspace(-1,1,ksize), np.linspace(-1,1,ksize))
+    d = np.sqrt(x*x+y*y)
+    sigma, mu = 1.0, 0.0
+    g = np.exp(-( (d-mu)**2 / ( 2.0 * sigma**2 ) ) )
+    g = g/np.sum(g)
+    return get_kernel(g, gpu)
+
+def get_kernel_cdiff(gpu=None):
+    g = np.ones((3,3))
+    g[1,1] = -8
+    return get_kernel(g, gpu)
+
+def apply_kernel(img, kernel, nmb_repetitions=1):
+    if len(img.shape)==2:
+        img = img.expand(1,1,img.shape[0],img.shape[1])
+    else:
+        print("WARNING! 3D NEEDS 3D KERNEL!")
+        img = img.permute([2,0,1])
+        img = img.expand(1,img.shape[0],img.shape[1],img.shape[2])
+        
+    for i in range(nmb_repetitions):
+        img = kernel(img)
+        
+    return img.squeeze()
+
+def torch_resize(img, new_sz=None, mode='bilinear', factor=None):
+    if factor is not None:
+        new_sz  = [int(img.shape[0]*factor), int(img.shape[1]*factor)]
+    if len(img.shape) == 2:
+        return F.interpolate(img.expand(1,1,img.shape[0],img.shape[1]), new_sz, mode=mode).squeeze()
+    elif len(img.shape) == 3:                        # add singleton to batch dim
+        return F.interpolate(img.unsqueeze(0).permute([0,3,1,2]), new_sz, mode=mode).permute([0,2,3,1])
+    else:
+        return F.interpolate(img.permute([0,3,1,2]), new_sz, mode=mode).permute([0,2,3,1])
+
+def apply_kernel_lowres(img, kernel, factor_downscaling=10, mode='bilinear', post_kernel=False):
+    old_sz = img.shape
+    new_sz = [int(img.shape[0]/factor_downscaling), int(img.shape[1]/factor_downscaling)]
+    img = torch_resize(img, new_sz, mode=mode)
+    img = apply_kernel(img, kernel, 1)
+    img = torch_resize(img, old_sz, mode=mode)
+    if post_kernel:
+        img = apply_kernel(img, kernel, 1)
+    return img
+
+def get_cartesian_resample_grid(shape_hw, gpu, use_half_precision=False):
+    # initialize reesampling Cartesian grid
+    theta = torch.zeros((1,2,3)).cuda(gpu)
+    theta[0,0,0] = 1
+    theta[0,1,1] = 1
+    
+    basegrid = F.affine_grid(theta, (1, 2, shape_hw[0], shape_hw[1]))
+    iResolution = torch.tensor([shape_hw[0], shape_hw[1]]).float().cuda(gpu).unsqueeze(0).unsqueeze(0)
+
+    grid = (basegrid[0,:,:,:] + 1) / 2
+    grid *= iResolution
+    cartesian_resample_grid = grid / iResolution
+
+    if use_half_precision:
+        cartesian_resample_grid = cartesian_resample_grid.half()
+        
+    return cartesian_resample_grid
 
 class AcidMan():
     def __init__(self, gpu, midi_man, music_man=None, time_man=None):
@@ -28,10 +99,7 @@ class AcidMan():
         self.osc_amp_modulator = 0
         self.osc_kumulator = 0
         
-        if time_man is None:
-            self.tm = gs.TimeMan()
-        else:
-            self.tm = time_man
+        self.kum_t = 0
         
         with torch.no_grad():
             self.cartesian_resample_grid = None
@@ -46,9 +114,6 @@ class AcidMan():
         
     
     def get_resample_grid(self, shape_hw):
-        # if self.cartesian_resample_grid is None:
-        #     self.cartesian_resample_grid = get_cartesian_resample_grid(shape_hw, self.gpu)
-        # resample_grid = self.cartesian_resample_grid.clone() 
         resample_grid = get_cartesian_resample_grid(shape_hw, self.gpu)
         return resample_grid
 
@@ -88,7 +153,6 @@ class AcidMan():
         
     def do_acid_a01(self, source, amp):
         
-        dt = self.tm.get_dt()
         frame_sum = torch.sum(source, axis=2)
         
         frame_sum -= frame_sum.min()
@@ -131,16 +195,19 @@ class AcidMan():
         fsum_amp *= 2*np.pi
         
         # xy modulatioself.nS: frequency
-        freq_rot_new = self.midi_man.get("B5",val_min=0,val_max=10.5,val_default=0.0)
+        freq_rot_new = self.midi_man.get("B5",val_min=0,val_max=3,val_default=0.0)
+        freq_rot_new = freq_rot_new ** 2
         if freq_rot_new != self.freq_rot:
-            self.phase_rot += dt*(self.freq_rot - freq_rot_new)
+            self.phase_rot += self.kum_t*(self.freq_rot - freq_rot_new)
             self.freq_rot = freq_rot_new    
         
         # if self.midi_man.get_value("G4"):
         #     self.osc_kumulator += dt*self.osc_amp_modulator*1e-3
         
-        y_wobble = torch.sin(dt * self.freq_rot  + fsum_amp + self.osc_kumulator)
-        x_wobble = torch.cos(dt * self.freq_rot  + fsum_amp + self.osc_kumulator)
+        self.kum_t += self.freq_rot * 0.1
+        
+        y_wobble = torch.sin(self.kum_t  + fsum_amp + self.osc_kumulator)
+        x_wobble = torch.cos(self.kum_t  + fsum_amp + self.osc_kumulator)
         
         kibbler_coef = self.midi_man.get("A5",val_min=0,val_max=10.9, val_default=0.0)
         
