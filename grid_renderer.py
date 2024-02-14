@@ -74,12 +74,14 @@ class GridRenderer():
 if __name__ == '__main__':
     # Get list of prompts
     M,N = (4,8)       # number of tiles
-    from datasets import load_dataset
+    # from datasets import load_dataset
     import random
-    dataset = load_dataset("FredZhang7/stable-diffusion-prompts-2.47M")
+    # dataset = load_dataset("FredZhang7/stable-diffusion-prompts-2.47M")
     
-    list_prompts_all = [random.choice(dataset['train'])['text'] for i in range(M*N)]
-    
+    list_prompts_all = []
+    with open("good_prompts.txt", "r") as file: 
+        list_prompts_all = file.read().split('\n')
+        
     # Convert to images
     sz = (128, 256)   # image size
     from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
@@ -87,6 +89,7 @@ if __name__ == '__main__':
     import torch
     from prompt_blender import PromptBlender
     from tqdm import tqdm
+    from sfast.compilers.diffusion_pipeline_compiler import (compile, CompilationConfig)
 
 
     pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
@@ -95,7 +98,6 @@ if __name__ == '__main__':
     pipe.vae = pipe.vae.cuda()
     pipe.set_progress_bar_config(disable=True)
     
-    from sfast.compilers.diffusion_pipeline_compiler import (compile, CompilationConfig)
     pipe.enable_xformers_memory_efficient_attention()
     config = CompilationConfig.Default()
     config.enable_xformers = True
@@ -103,29 +105,59 @@ if __name__ == '__main__':
     config.enable_cuda_graph = True
     pipe = compile(pipe, config)
     
+    akai_midimix = lt.MidiInput("akai_midimix")
     
     pb = PromptBlender(pipe)
-    pb.w = 128
+    pb.w = 64
+    pb.h = 64
     latents = pb.get_latents()
-
-    list_imgs = []
-    list_prompts = []
-    for i in tqdm(range(M*N)):
-        pb.set_prompt1(list_prompts_all[i])
-        pb.set_prompt2(list_prompts_all[i])
-        img = pb.generate_blended_img(0.0, latents)
-        img_tile = img.resize(sz[::-1])
-        list_imgs.append(np.asarray(img_tile))
-        list_prompts.append(list_prompts_all[i])
+    
+    def get_prompts_and_img():
+        list_imgs = []
+        list_prompts = random.sample(list_prompts_all, N*M)
+        for prompt in tqdm(list_prompts):
+            pb.set_prompt1(prompt)
+            pb.set_prompt2(prompt)
+            img = pb.generate_blended_img(0.0, latents)
+            img_tile = img.resize(sz[::-1])
+            list_imgs.append(np.asarray(img_tile))
+            
+        return list_prompts, list_imgs
+    
     
     gridrenderer = GridRenderer(M,N,sz)
-    secondary_renderer = lt.Renderer(width=1024, height=512, backend='opencv')
+    secondary_renderer = lt.Renderer(width=2048, height=1024, backend='opencv')
     
+    list_prompts, list_imgs = get_prompts_and_img()
     grid_input = gridrenderer.list_to_tensor(list_imgs)
     gridrenderer.inject_tiles(grid_input)
     
     #%%#
     def get_aug_prompt(prompt):
+        mod = ""
+        if akai_midimix.get("A4", button_mode="toggle"):
+            mod += "psychedelic "
+        if akai_midimix.get("B4", button_mode="toggle"):
+            mod += "electric "
+        if akai_midimix.get("C4", button_mode="toggle"):
+            mod += "surreal "
+        if akai_midimix.get("D4", button_mode="toggle"):
+            mod += "fractal "
+        if akai_midimix.get("E4", button_mode="toggle"):
+            mod += "spiritual "
+        if akai_midimix.get("F4", button_mode="toggle"):
+            mod += "metallic "
+        if akai_midimix.get("G4", button_mode="toggle"):
+            mod += "wobbly "
+        if akai_midimix.get("H4", button_mode="toggle"):
+            mod += "robotic "
+            
+        
+        # if len(mod) > 0:
+        #     mod = f"{mod}"
+        
+        prompt = f"{mod}{prompt}"
+        print(prompt)
         return prompt
     
     negative_prompt = "blurry, lowres, disfigured"
@@ -146,7 +178,7 @@ if __name__ == '__main__':
     
         fract = 0
         while fract < 1:
-            d_fract = 0.01#akai_lpd8.get("E0", val_min=0.005, val_max=0.1)
+            d_fract = akai_midimix.get("A0", val_min=0.005, val_max=0.1)
             latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
             img_mix = pb.generate_blended_img(fract, latents_mix)
             secondary_renderer.render(img_mix)
@@ -165,6 +197,15 @@ if __name__ == '__main__':
                 pb.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
             else:
                 fract += d_fract
+                
+            do_new_prompts = akai_midimix.get("A3", button_mode="pressed_once")
+            
+            if do_new_prompts:
+                print("getting new prompts...")
+                list_prompts, list_imgs = get_prompts_and_img()
+                grid_input = gridrenderer.list_to_tensor(list_imgs)
+                gridrenderer.inject_tiles(grid_input)
+                print("done!")
                 
         idx_cycle += 1
 
