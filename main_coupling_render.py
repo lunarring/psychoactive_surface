@@ -29,31 +29,33 @@ def get_prompts_and_img():
     return list_prompts, list_imgs
 
 def get_aug_prompt(prompt):
-    mod = ""
-    if akai_midimix.get("A4", button_mode="toggle"):
-        mod = "psychedelic "
-    if akai_midimix.get("B4", button_mode="toggle"):
-        mod = "dark "
-    if akai_midimix.get("C4", button_mode="toggle"):
-        mod = "bright "
-    if akai_midimix.get("D4", button_mode="toggle"):
-        mod = "fractal "
-    if akai_midimix.get("E4", button_mode="toggle"):
-        mod = "organic "
-    if akai_midimix.get("F4", button_mode="toggle"):
-        mod = "metallic "
-    if akai_midimix.get("G4", button_mode="toggle"):
-        mod = "weird and strange "
-    if akai_midimix.get("H4", button_mode="toggle"):
-        mod = "robotic "
+    # mod = ""
+    # if akai_midimix.get("A4", button_mode="toggle"):
+    #     mod = "psychedelic "
+    # if akai_midimix.get("B4", button_mode="toggle"):
+    #     mod = "dark "
+    # if akai_midimix.get("C4", button_mode="toggle"):
+    #     mod = "bright "
+    # if akai_midimix.get("D4", button_mode="toggle"):
+    #     mod = "fractal "
+    # if akai_midimix.get("E4", button_mode="toggle"):
+    #     mod = "organic "
+    # if akai_midimix.get("F4", button_mode="toggle"):
+    #     mod = "metallic "
+    # if akai_midimix.get("G4", button_mode="toggle"):
+    #     mod = "weird and strange "
+    # if akai_midimix.get("H4", button_mode="toggle"):
+    #     mod = "robotic "
 
-    if mod != "":
-        prompt = f"very {mod}, {prompt} looking very {mod}"
-    print(prompt)
+    # if mod != "":
+    #     prompt = f"very {mod}, {prompt} looking very {mod}"
+    # print(prompt)
     return prompt
 
 #%% inits
-akai_midimix = lt.MidiInput("akai_midimix")
+meta_input = lt.MetaInput()
+
+# akai_midimix = lt.MidiInput("akai_midimix")
 
 use_compiled_model = False
 
@@ -73,7 +75,7 @@ if use_compiled_model:
 else:
     pipe.unet.forward = lambda *args, **kwargs: forward_modulated(pipe.unet, *args, **kwargs)
     
-    acidman = u_deepacid.AcidMan(0, akai_midimix, None)
+    acidman = u_deepacid.AcidMan(0, meta_input, None)
     acidman.init('a01')
 
 pb = PromptBlender(pipe)
@@ -151,13 +153,13 @@ while True:
         osc_high = receiver.get_last_value("/high")
         
         if not use_compiled_model:
-            H0 = akai_midimix.get("H0", val_min=0, val_max=10, val_default=1)
+            H0 = meta_input.get(akai_midimix="H0", val_min=0, val_max=10, val_default=1)
             modulations['b0_samp'] = H0 * osc_low
             # modulations['b0_emb'] = H0 * osc_low
             #acidman.osc_kumulator += H0 * osc_low
             
-            H1 = akai_midimix.get("H1", val_min=0, val_max=10, val_default=0, variable_name="bobo")
-            H2 = akai_midimix.get("H2", val_min=0, val_max=10, val_default=0, variable_name="kobo")
+            H1 = meta_input.get(akai_midimix="H1", val_min=0, val_max=10, val_default=0, variable_name="bobo")
+            H2 = meta_input.get(akai_midimix="H2", val_min=0, val_max=10, val_default=0, variable_name="kobo")
             
             for i in range(3):
                 modulations[f'e{i}_emb'] = 1 - (H1*osc_mid)
@@ -166,7 +168,7 @@ while True:
             modulations['d2_acid'] = acid_func
             
             # EXPERIMENTAL WHISPER
-            do_record_mic = akai_midimix.get("A3", button_mode="held_down")
+            do_record_mic = meta_input.get(akai_midimix="A3", button_mode="held_down")
             # do_record_mic = akai_lpd8.get('s', button_mode='pressed_once')
             
             if do_record_mic:
@@ -183,11 +185,12 @@ while True:
                         embeds_mod_full = pb.get_prompt_embeds(prompt)
                     stop_recording = False
             
-            fract_mod = akai_midimix.get("G0", val_default=0, val_max=2, val_min=0)
+            fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
             embeds_mod = pb.blend_prompts(pb.embeds1, embeds_mod_full, fract_mod)
             modulations['d*_extra_embeds'] = embeds_mod[0]
         
-        d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+        # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+        d_fract = meta_input.get(akai_lpd8="E0", akai_midimix="A0", val_min=0.0, val_max=0.1, val_default=0)
         #d_fract *= osc_low
         
         latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
@@ -209,7 +212,7 @@ while True:
         else:
             fract += d_fract
             
-        do_new_prompts = akai_midimix.get("A4", button_mode="pressed_once")
+        do_new_prompts = meta_input.get(akai_midimix="A4", button_mode="pressed_once")
         
         if do_new_prompts:
             print("getting new prompts...")

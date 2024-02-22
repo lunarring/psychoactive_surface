@@ -209,7 +209,7 @@ class AcidMan():
         y_wobble = torch.sin(self.kum_t  + fsum_amp + self.osc_kumulator)
         x_wobble = torch.cos(self.kum_t  + fsum_amp + self.osc_kumulator)
         
-        kibbler_coef = self.midi_man.get("A5",val_min=0,val_max=10.9, val_default=0.0)
+        kibbler_coef = self.midi_man.get(akai_midimix="A5",val_min=0,val_max=10.9, val_default=0.0)
         
         v_edges = edges * y_wobble
         h_edges = edges * x_wobble
