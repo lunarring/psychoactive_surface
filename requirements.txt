@@ -1,0 +1,10 @@
+datasets
+diffusers
+general
+lpips==0.1.4
+numpy
+opencv_python
+Pillow
+Requests
+torch
+tqdm

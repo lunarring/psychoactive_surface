@@ -165,6 +165,12 @@ class PromptBlender:
                 
                 
         return image
+    
+    def generate_img(self, latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds):
+        image = self.pipe(guidance_scale=0.0, num_inference_steps=self.num_inference_steps, latents=latents, 
+                prompt_embeds=prompt_embeds, negative_prompt_embeds=negative_prompt_embeds, 
+                pooled_prompt_embeds=pooled_prompt_embeds, negative_pooled_prompt_embeds=negative_pooled_prompt_embeds).images[0]
+        return image
 
 
     def get_all_embeddings(self, list_prompts):
