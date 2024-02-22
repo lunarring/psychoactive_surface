@@ -1,3 +1,30 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Dec 13 22:13:24 2023
+
+@author: lunar
+"""
+
+#%%
+from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
+from diffusers.models.unet_2d_condition import UNet2DConditionOutput
+import torch
+
+from diffusers import AutoencoderTiny
+from sfast.compilers.stable_diffusion_pipeline_compiler import (compile, CompilationConfig)
+from diffusers import ControlNetModel
+from diffusers.utils import load_image
+import lunar_tools as lt
+import numpy as np
+from PIL import Image
+from lunar_tools.comms import OSCSender, OSCReceiver
+from lunar_tools.control_input import MidiInput
+from PIL import Image
+import requests
+import numpy as np
+import cv2
+
 # from unet
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -5,9 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
-from torch.nn import functional as F
 
-from diffusers.models.unet_2d_condition import UNet2DConditionOutput
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, deprecate, logging, scale_lora_layers, unscale_lora_layers
@@ -41,16 +66,94 @@ from diffusers.models.unet_2d_blocks import (
     get_up_block,
 )
 
-def torch_resample(tex, grid,padding_mode="reflection", mode='bilinear'):
-#    import pdb; pdb.set_trace()
-    if len(tex.shape) == 3:                        # add singleton to batch dim
-        return F.grid_sample(tex.view((1,)+tex.shape),grid.view((1,)+grid.shape),padding_mode=padding_mode,mode=mode)[0,:,:,:].permute([1,2,0])
-    elif len(tex.shape) == 4:
-        return F.grid_sample(tex,grid.view((1,)+grid.shape),padding_mode=padding_mode,mode=mode)[0,:,:,:].permute([1,2,0])
-    else:
-        raise ValueError('torch_resample: bad input dims')
+from prompt_blender import PromptBlender
 
-def forward_modulated(
+akai_midimix = MidiInput(device_name="akai_midimix")
+#mainOSCReceiver = OSCReceiver('10.20.17.122', port_receiver=8011)
+# mainOSCReceiver = OSCReceiver('10.20.17.122', port_receiver=8100)
+
+torch.set_grad_enabled(False)
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
+
+use_maxperf = False
+
+pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
+    
+    
+pipe.to("cuda")
+pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
+pipe.vae = pipe.vae.cuda()
+pipe.set_progress_bar_config(disable=True)
+
+if use_maxperf:
+    config = CompilationConfig.Default()
+    config.enable_xformers = True
+    config.enable_triton = True
+    config.enable_cuda_graph = True
+    config.enable_jit = True
+    config.enable_jit_freeze = True
+    config.trace_scheduler = True
+    config.enable_cnn_optimization = True
+    config.preserve_parameters = False
+    config.prefer_lowp_gemm = True
+    
+    pipe = compile(pipe, config)
+
+#%%
+def get_ctrl_img(cam_img, ctrlnet_type, low_threshold=100, high_threshold=200):
+    
+    cam_img = np.array(cam_img)
+    ctrl_image = cv2.Canny(cam_img, low_threshold, high_threshold)
+    ctrl_image = ctrl_image[:, :, None]
+    ctrl_image = np.concatenate([ctrl_image, ctrl_image, ctrl_image], axis=2)
+    ctrl_image = Image.fromarray(ctrl_image)
+
+    return ctrl_image 
+
+def zoom_image(image, zoom_factor):
+    if zoom_factor == 1.0:
+        return image  # No change if zoom_factor is 1.0
+
+    # Calculate the new dimensions
+    height, width, _ = image.shape
+    new_height = int(height / zoom_factor)
+    new_width = int(width / zoom_factor)
+
+    # Calculate the cropping coordinates to keep the center
+    crop_x = (width - new_width) // 2
+    crop_y = (height - new_height) // 2
+
+    # Crop the image around its center
+    cropped_image = image[crop_y:crop_y + new_height, crop_x:crop_x + new_width]
+
+    # Resize the cropped image to the original size
+    zoomed_image = cv2.resize(cropped_image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+    return zoomed_image
+
+
+
+torch.manual_seed(1)
+noise_level = 0
+
+#%%
+
+def mod_func(sample):
+    #noise = (torch.rand(sample.shape, device=sample.device) - 0.5)
+    noise = torch.randn(sample.shape, device=sample.device)
+    
+    freq = akai_midimix.get("E0", val_min=0, val_max=10, val_default=0)
+    ramp = torch.linspace(0,1,sample.shape[2], device=sample.device) * 2*np.pi * freq
+    sin_mod = torch.sin(ramp)
+    #noise = sin_mod.reshape([1,1,1,sample.shape[2]])
+    
+    #noise = 1
+    
+    return noise
+
+
+def forward(
     self,
     sample: torch.FloatTensor,
     timestep: Union[torch.Tensor, float, int],
@@ -65,7 +168,6 @@ def forward_modulated(
     down_intrablock_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
     encoder_attention_mask: Optional[torch.Tensor] = None,
     return_dict: bool = True,
-    modulations = {},
 ) -> Union[UNet2DConditionOutput, Tuple]:
     r"""
     The [`UNet2DConditionModel`] forward method.
@@ -121,7 +223,6 @@ def forward_modulated(
             If `return_dict` is True, an [`~models.unet_2d_condition.UNet2DConditionOutput`] is returned, otherwise
             a `tuple` is returned where the first element is the sample tensor.
     """
-    
     # By default samples have to be AT least a multiple of the overall upsampling factor.
     # The overall upsampling factor is equal to 2 ** (# num of upsampling layers).
     # However, the upsampling interpolation output size can be forced to fit any upsampling size
@@ -321,30 +422,13 @@ def forward_modulated(
         )
         down_intrablock_additional_residuals = down_block_additional_residuals
         is_adapter = True
-        
-    # modulations
-    if modulations is None:
-        modulations = {}
-    
-    if 'noise_mod_func' in modulations:
-        noise_mod_func = modulations['noise_mod_func']
-        
+
     down_block_res_samples = (sample,)
     for i, downsample_block in enumerate(self.down_blocks):
         
-        if f'e{i}_samp' in modulations:
-            noise_coef = modulations[f'e{i}_samp']
-            noise = noise_mod_func(sample)
-            sample += noise * noise_coef
-        
-        if f'e{i}_emb' in modulations:
-            encoder_state_mod = modulations[f'e{i}_emb']
-        else:
-            encoder_state_mod = 1
-
-        if f'e{i}_acid' in modulations:
-            amp_field, warp_field = modulations[f'e{i}_acid'](sample)
-            sample *= (1+amp_field)            
+        noise_coef = akai_midimix.get(f"A{i}", val_min=0, val_max=1, val_default=0)
+        noise = mod_func(sample)
+        sample += noise * noise_coef * (10**i) / 10
         
         if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
             # For t2i-adapter CrossAttnDownBlock2D
@@ -354,7 +438,7 @@ def forward_modulated(
 
             sample, res_samples = downsample_block(
                 hidden_states=sample,
-                temb=emb*encoder_state_mod,
+                temb=emb,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
                 cross_attention_kwargs=cross_attention_kwargs,
@@ -378,38 +462,25 @@ def forward_modulated(
             new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
 
         down_block_res_samples = new_down_block_res_samples
-        
 
     # 4. mid
     if self.mid_block is not None:
         if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
-            if 'b0_samp' in modulations:
-                noise_coef = modulations['b0_samp']
-                noise = noise_mod_func(sample)
-                sample += noise * noise_coef
-            
-            if 'b0_emb' in modulations:
-                encoder_state_mod = modulations['b0_emb']
-            else:
-                encoder_state_mod = 1
-                
-            if 'b0_acid' in modulations:
-                amp_field, warp_field = modulations['b0_acid'](sample)
-                
-                # sample *= (1+amp_field*10)
-                sample = torch_resample(sample.float(), ((warp_field * 2) - 1)).permute([2,0,1])[None].half()
-                
             sample = self.mid_block(
                 sample,
-                emb*encoder_state_mod,
+                emb,
                 encoder_hidden_states=encoder_hidden_states,
-                #encoder_hidden_states = modulations['d*_extra_embeds'],
                 attention_mask=attention_mask,
                 cross_attention_kwargs=cross_attention_kwargs,
                 encoder_attention_mask=encoder_attention_mask,
             )
         else:
             sample = self.mid_block(sample, emb)
+            
+        noise_coef = akai_midimix.get("B0", val_min=0, val_max=100, val_default=0)
+        noise = mod_func(sample)
+        sample += noise * noise_coef
+            
             
         # To support T2I-Adapter-XL
         if (
@@ -418,7 +489,7 @@ def forward_modulated(
             and sample.shape == down_intrablock_additional_residuals[0].shape
         ):
             sample += down_intrablock_additional_residuals.pop(0)
-            
+
     if is_controlnet:
         sample = sample + mid_block_additional_residual
 
@@ -434,44 +505,21 @@ def forward_modulated(
         if not is_final_block and forward_upsample_size:
             upsample_size = down_block_res_samples[-1].shape[2:]
             
-        if f'd{i}_samp' in modulations:
-            noise_coef = modulations[f'd{i}_samp']
-            noise = noise_mod_func(sample)
-            sample += noise * noise_coef
-        
-        if f'd{i}_emb' in modulations:
-            encoder_state_mod = modulations[f'd{i}_emb']
-        else:
-            encoder_state_mod = 1
-            
-        if f'd{i}_acid' in modulations:
-            amp_field, warp_field = modulations[f'd{i}_acid'](sample)
-            sample *= (1+amp_field)
+        noise_coef = akai_midimix.get(f"C{i}", val_min=0, val_max=100, val_default=0)
+        noise = mod_func(sample)
+        sample += noise * noise_coef
             
         if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
-            if f'd*_extra_embeds' in modulations:
-                sample = upsample_block(
-                    hidden_states=sample,
-                    temb=emb*encoder_state_mod,
-                    res_hidden_states_tuple=res_samples,
-                    #encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states = modulations['d*_extra_embeds'],
-                    cross_attention_kwargs=cross_attention_kwargs,
-                    upsample_size=upsample_size,
-                    attention_mask=attention_mask,
-                    encoder_attention_mask=encoder_attention_mask,
-                )
-            else:
-                sample = upsample_block(
-                    hidden_states=sample,
-                    temb=emb*encoder_state_mod,
-                    res_hidden_states_tuple=res_samples,
-                    encoder_hidden_states=encoder_hidden_states,
-                    cross_attention_kwargs=cross_attention_kwargs,
-                    upsample_size=upsample_size,
-                    attention_mask=attention_mask,
-                    encoder_attention_mask=encoder_attention_mask,
-                )                
+            sample = upsample_block(
+                hidden_states=sample,
+                temb=emb,
+                res_hidden_states_tuple=res_samples,
+                encoder_hidden_states=encoder_hidden_states,
+                cross_attention_kwargs=cross_attention_kwargs,
+                upsample_size=upsample_size,
+                attention_mask=attention_mask,
+                encoder_attention_mask=encoder_attention_mask,
+            )
             
             
         else:
@@ -482,25 +530,6 @@ def forward_modulated(
                 upsample_size=upsample_size,
                 scale=lora_scale,
             )
-
-        # if i == 0:
-        #     amp = 1e-2
-        #     resample_grid = acidman.do_acid(sample[0].float().permute([1,2,0]), amp)
-        #     amp_mod = (resample_grid - acidman.identity_resample_grid)     
-            
-        #     sample = torch_resample(sample.float(), ((resample_grid * 2) - 1)).permute([2,0,1])[None].half()
-        #     # sample *= (1+amp_mod[:,:,0][None][None])
-        #     # sample += amp_mod[:,:,0][None][None]
-
-
-        # if i == 1:
-        #     if par_container.sample is None:
-        #         par_container.sample = sample        
-                
-        #     if use_prev_emb:
-        #         ramp = torch.linspace(0,1,sample.shape[2], device=sample.device).half()
-        #         ramp = ramp[None][None][None]
-        #         sample = ramp * sample + (1 - ramp)*par_container.sample
             
     # 6. post-process
     if self.conv_norm_out:
@@ -516,3 +545,101 @@ def forward_modulated(
         return (sample,)
 
     return UNet2DConditionOutput(sample=sample)
+
+pipe.unet.forward = lambda *args, **kwargs: forward(pipe.unet, *args, **kwargs)
+
+# draw
+sz = (512*2, 512*2)
+renderer = lt.Renderer(width=sz[1], height=sz[0])
+latents = torch.randn((1,4,64,64)).half().cuda() # 64 is the fastest
+latents_additive = torch.randn((1,4,64,64)).half().cuda() # 64 is the fastest
+
+speech_detector = lt.Speech2Text()
+
+prompts = []
+prompts.append('painting of a strange cat')
+prompts.append('painting of a tree')
+
+negative_prompt = "text, frame, photorealistic, photo"
+
+blender = PromptBlender(pipe)
+
+prompt_embeds = blender.get_all_embeddings(prompts)
+
+blender.set_init_position(0)
+blender.set_target(1)
+velocity = 10
+
+blender_step_debug = 0
+
+embeds1 = blender.current        
+embeds2 = blender.current        
+
+while True:
+    do_record_mic = akai_midimix.get("A3", button_mode="held_down")
+
+    if do_record_mic:
+        if not speech_detector.audio_recorder.is_recording:
+            speech_detector.start_recording()
+    elif not do_record_mic:
+        if speech_detector.audio_recorder.is_recording:
+            try:
+                prompt = speech_detector.stop_recording()
+            except Exception as e:
+                print(f"FAIL {e}")
+            print(f"New prompt: {prompt}")
+            if prompt is not None:
+                embeds1 = embeds2
+                embeds2 = blender.get_prompt_embeds(prompt, negative_prompt)
+                print(f"norm: {torch.linalg.norm(embeds1[0] - embeds2[0]).item()}")
+            stop_recording = False    
+    
+    fract_blending = akai_midimix.get("B1")
+    fract_blending_fine = akai_midimix.get("B2")
+    fract_blending += 0.1*fract_blending_fine-0.05
+    prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = blender.blend_prompts(embeds1, embeds2, fract_blending)
+    
+    refresh_latents = akai_midimix.get("B4", button_mode='released_once')
+    if refresh_latents:
+        latents = torch.randn((1,4,64,64)).half().cuda() # 64 is the fastest
+    
+    # torch.manual_seed(1)
+    
+    image = pipe(guidance_scale=0.0, num_inference_steps=1, latents=latents, 
+                 prompt_embeds=prompt_embeds, negative_prompt_embeds=negative_prompt_embeds, 
+                 pooled_prompt_embeds=pooled_prompt_embeds, negative_pooled_prompt_embeds=negative_pooled_prompt_embeds).images[0]
+        
+    # Render the image
+    image = np.asanyarray(image)
+    image = np.uint8(image)
+    renderer.render(image)
+    
+    
+#%% LPIPS differences
+from tqdm import tqdm
+list_fracts = np.linspace(0,1,101)
+list_imgs = []
+for fract_blending in tqdm(list_fracts):
+    prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = blender.blend_prompts(embeds1, embeds2, fract_blending)
+    
+    image = pipe(guidance_scale=0.0, num_inference_steps=1, latents=latents, 
+                 prompt_embeds=prompt_embeds, negative_prompt_embeds=negative_prompt_embeds, 
+                 pooled_prompt_embeds=pooled_prompt_embeds, negative_pooled_prompt_embeds=negative_pooled_prompt_embeds).images[0]
+        
+    list_imgs.append(image)
+            
+list_diff_mse = []
+list_diff_lpips = []
+for i in range(len(list_imgs)-1):
+    img1 = list_imgs[i]
+    img2 = list_imgs[i+1]
+    list_diff_mse.append(np.linalg.norm(np.asarray(img1)-np.asarray(img2)))
+    list_diff_lpips.append(be.get_lpips_similarity(img1, img2))
+    
+#%% small experiment using latentblending
+from latentblending import BlendingEngine
+be = BlendingEngine(pipe)
+nmb_max_branches = 10
+be.set_num_inference_steps(1)
+be.list_idx_injection = [0]
+be.list_nmb_stems = [nmb_max_branches]

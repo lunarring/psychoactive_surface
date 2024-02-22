@@ -9,7 +9,7 @@ import torch
 from prompt_blender import PromptBlender
 from tqdm import tqdm
 from sfast.compilers.diffusion_pipeline_compiler import (compile, CompilationConfig)
-
+import time
 from u_unet_modulated import forward_modulated
 import u_deepacid
 
@@ -19,37 +19,36 @@ def get_prompts_and_img():
     list_imgs = []
     list_prompts = []
     for i in tqdm(range(nmb_rows*nmb_cols)):
-        pb.set_prompt1(list_prompts_all[i])
-        pb.set_prompt2(list_prompts_all[i])
+        prompt = random.choice(list_prompts_all)
+        pb.set_prompt1(prompt)
+        pb.set_prompt2(prompt)
         img = pb.generate_blended_img(0.0, latents)
         img_tile = img.resize(shape_hw[::-1])
         list_imgs.append(np.asarray(img_tile))
-        list_prompts.append(list_prompts_all[i])
+        list_prompts.append(prompt)
     return list_prompts, list_imgs
 
 def get_aug_prompt(prompt):
     mod = ""
     if akai_midimix.get("A4", button_mode="toggle"):
-        mod += "psychedelic "
+        mod = "psychedelic "
     if akai_midimix.get("B4", button_mode="toggle"):
-        mod += "electric "
+        mod = "dark "
     if akai_midimix.get("C4", button_mode="toggle"):
-        mod += "surreal "
+        mod = "bright "
     if akai_midimix.get("D4", button_mode="toggle"):
-        mod += "fractal "
+        mod = "fractal "
     if akai_midimix.get("E4", button_mode="toggle"):
-        mod += "spiritual "
+        mod = "organic "
     if akai_midimix.get("F4", button_mode="toggle"):
-        mod += "metallic "
+        mod = "metallic "
     if akai_midimix.get("G4", button_mode="toggle"):
-        mod += "wobbly "
+        mod = "weird and strange "
     if akai_midimix.get("H4", button_mode="toggle"):
-        mod += "robotic "
-    
-    # if len(mod) > 0:
-    #     mod = f"{mod}"
-    
-    prompt = f"{mod}{prompt}"
+        mod = "robotic "
+
+    if mod != "":
+        prompt = f"very {mod}, {prompt} looking very {mod}"
     print(prompt)
     return prompt
 
@@ -78,10 +77,10 @@ else:
     acidman.init('a01')
 
 pb = PromptBlender(pipe)
-pb.w = 64
+pb.w = 128
 pb.h = 64
 latents = pb.get_latents()
-secondary_renderer = lt.Renderer(width=1024, height=512, backend='opencv')
+secondary_renderer = lt.Renderer(width=1024*2, height=512*2, backend='opencv')
 #%% prepare prompt window
 nmb_rows,nmb_cols = (4,8)       # number of tiles
 
@@ -96,10 +95,16 @@ list_prompts, list_imgs = get_prompts_and_img()
 gridrenderer = lt.GridRenderer(nmb_rows,nmb_cols,shape_hw)
 gridrenderer.update(list_imgs)
 
-#%%#
+show_osc_visualization = False
 
+receiver = lt.OSCReceiver('10.40.48.97')
+if show_osc_visualization:
+    receiver.start_visualization(shape_hw_vis=(300, 500), nmb_cols_vis=3, nmb_rows_vis=2,backend='opencv')
+
+speech_detector = lt.Speech2Text()
+#%%#
 negative_prompt = "blurry, lowres, disfigured"
-space_prompt = "photo of the moon"
+space_prompt = list_prompts[0]
 
 # Run space
 idx_cycle = 0
@@ -117,9 +122,15 @@ if not use_compiled_model:
         resample_grid = acidman.do_acid(sample[0].float().permute([1,2,0]), amp)
         amp_mod = (resample_grid - acidman.identity_resample_grid)     
         return amp_mod[:,:,0][None][None], resample_grid
-    
     modulations['noise_mod_func'] = noise_mod_func
+    modulations['d*_extra_embeds'] = pb.get_prompt_embeds("full of electric sparkles")[0]
 
+
+embeds_mod_full = pb.get_prompt_embeds("full of electric sparkles")
+
+pb.num_inference_steps = 1
+
+t_last = time.time()
 while True:
     # cycle back from target to source
     latents1 = latents2.clone()
@@ -130,17 +141,55 @@ while True:
 
     fract = 0
     while fract < 1:
+        dt =time.time() - t_last
+        lt.dynamic_print(f"fps: {1/dt:.1f}")
+        t_last = time.time()
+        if show_osc_visualization:
+            receiver.show_visualization()
+        osc_low = receiver.get_last_value("/low")
+        osc_mid = receiver.get_last_value("/mid")
+        osc_high = receiver.get_last_value("/high")
+        
         if not use_compiled_model:
-            #modulations['b0_samp'] = akai_midimix.get("H0", val_min=0, val_max=100)
-            modulations['b0_emb'] = akai_midimix.get("H1", val_min=0, val_max=1, val_default=1)
+            H0 = akai_midimix.get("H0", val_min=0, val_max=10, val_default=1)
+            modulations['b0_samp'] = H0 * osc_low
+            # modulations['b0_emb'] = H0 * osc_low
+            #acidman.osc_kumulator += H0 * osc_low
+            
+            H1 = akai_midimix.get("H1", val_min=0, val_max=10, val_default=0, variable_name="bobo")
+            H2 = akai_midimix.get("H2", val_min=0, val_max=10, val_default=0, variable_name="kobo")
             
             for i in range(3):
-                modulations[f'e{i}_emb'] = akai_midimix.get("H0", val_min=0, val_max=1, val_default=1, variable_name="bobo")
-                modulations[f'd{i}_emb'] = akai_midimix.get("H2", val_min=0, val_max=1, val_default=1, variable_name="kobo")
+                modulations[f'e{i}_emb'] = 1 - (H1*osc_mid)
+                modulations[f'd{i}_emb'] = 1 - (H2*osc_high)
                 
-            modulations['d1_acid'] = acid_func
+            modulations['d2_acid'] = acid_func
+            
+            # EXPERIMENTAL WHISPER
+            do_record_mic = akai_midimix.get("A3", button_mode="held_down")
+            # do_record_mic = akai_lpd8.get('s', button_mode='pressed_once')
+            
+            if do_record_mic:
+                if not speech_detector.audio_recorder.is_recording:
+                    speech_detector.start_recording()
+            elif not do_record_mic:
+                if speech_detector.audio_recorder.is_recording:
+                    try:
+                        prompt = speech_detector.stop_recording()
+                    except Exception as e:
+                        print(f"FAIL {e}")
+                    print(f"New prompt: {prompt}")
+                    if prompt is not None:
+                        embeds_mod_full = pb.get_prompt_embeds(prompt)
+                    stop_recording = False
+            
+            fract_mod = akai_midimix.get("G0", val_default=0, val_max=2, val_min=0)
+            embeds_mod = pb.blend_prompts(pb.embeds1, embeds_mod_full, fract_mod)
+            modulations['d*_extra_embeds'] = embeds_mod[0]
         
-        d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1)
+        d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+        #d_fract *= osc_low
+        
         latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
         img_mix = pb.generate_blended_img(fract, latents_mix, modulations=modulations)
         secondary_renderer.render(img_mix)
@@ -160,7 +209,7 @@ while True:
         else:
             fract += d_fract
             
-        do_new_prompts = akai_midimix.get("A3", button_mode="pressed_once")
+        do_new_prompts = akai_midimix.get("A4", button_mode="pressed_once")
         
         if do_new_prompts:
             print("getting new prompts...")

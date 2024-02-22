@@ -1,7 +1,9 @@
 # Custom
 good*.txt
 embds_imgs/*
-
+logs/*
+xj*.py
+xa*.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
