@@ -21,7 +21,9 @@ use_compiled_model = False
 width_latents = 128
 height_latents = 64
 negative_prompt = ""
-dir_save = "embds_imgs"
+dir_embds_imgs = "embds_imgs"
+width_images = 256
+height_images = 128
 
 
 
@@ -47,8 +49,8 @@ pb.h = height_latents
 
 
 # %%
-if not os.path.exists(dir_save):
-    os.makedirs(dir_save)
+if not os.path.exists(dir_embds_imgs):
+    os.makedirs(dir_embds_imgs)
 
 list_prompts_all = []
 with open("good_prompts.txt", "r", encoding="utf-8") as file: 
@@ -59,12 +61,12 @@ for prompt in tqdm(list_prompts_all):
     hash_object = hashlib.md5(prompt.encode())
     hash_code = hash_object.hexdigest()[:6].upper()
 
-    fp_img = f"{dir_save}/{hash_code}.jpg"
-    fp_embed = f"{dir_save}/{hash_code}.pkl"
-    fp_prompt = f"{dir_save}/{hash_code}.txt"
+    fp_img = f"{dir_embds_imgs}/{hash_code}.jpg"
+    fp_embed = f"{dir_embds_imgs}/{hash_code}.pkl"
+    fp_prompt = f"{dir_embds_imgs}/{hash_code}.txt"
 
-    if os.path.exists(fp_img) and os.path.exists(fp_embed) and os.path.exists(fp_prompt) :
-        continue
+    # if os.path.exists(fp_img) and os.path.exists(fp_embed) and os.path.exists(fp_prompt) :
+    #     continue
 
     latents = pb.get_latents()
     prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pb.get_prompt_embeds(prompt, negative_prompt)
@@ -77,6 +79,7 @@ for prompt in tqdm(list_prompts_all):
     "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds.cpu()
     }
     torch.save(embeddings, fp_embed)
+    image = image.resize((width_images, height_images))
     image.save(fp_img)
     with open(fp_prompt, "w", encoding="utf-8") as f:
         f.write(prompt)

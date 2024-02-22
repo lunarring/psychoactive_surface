@@ -12,7 +12,18 @@ from sfast.compilers.diffusion_pipeline_compiler import (compile, CompilationCon
 import time
 from u_unet_modulated import forward_modulated
 import u_deepacid
+import hashlib
+from PIL import Image
+import os
 
+
+#%% VARS
+use_compiled_model = False
+width_latents = 128
+height_latents = 64
+shape_hw_prev = (128, 256)   # image size
+ip_address_osc_receiver = '10.40.48.97'
+dir_embds_imgs = "embds_imgs"
 
 #%% aux func
 def get_prompts_and_img():
@@ -20,10 +31,19 @@ def get_prompts_and_img():
     list_prompts = []
     for i in tqdm(range(nmb_rows*nmb_cols)):
         prompt = random.choice(list_prompts_all)
-        pb.set_prompt1(prompt)
-        pb.set_prompt2(prompt)
-        img = pb.generate_blended_img(0.0, latents)
-        img_tile = img.resize(shape_hw[::-1])
+
+        hash_object = hashlib.md5(prompt.encode())
+        hash_code = hash_object.hexdigest()[:6].upper()
+
+        fp_img = f"{dir_embds_imgs}/{hash_code}.jpg"
+
+        if os.path.exists(fp_img):
+            img_tile = Image.open(fp_img)
+        else:
+            latents = pb.get_latents()
+            prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pb.get_prompt_embeds(prompt, negative_prompt)
+            img = pb.generate_img(latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds)
+            img_tile = img.resize(shape_hw_prev[::-1])
         list_imgs.append(np.asarray(img_tile))
         list_prompts.append(prompt)
     return list_prompts, list_imgs
@@ -54,7 +74,7 @@ def get_aug_prompt(prompt):
 
 #%% inits
 meta_input = lt.MetaInput()
-use_compiled_model = False
+
 
 pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
 pipe.to("cuda")
@@ -76,27 +96,27 @@ else:
     acidman.init('a01')
 
 pb = PromptBlender(pipe)
-pb.w = 128
-pb.h = 64
+pb.w = width_latents
+pb.h = height_latents
 latents = pb.get_latents()
 secondary_renderer = lt.Renderer(width=1024*2, height=512*2, backend='opencv')
 #%% prepare prompt window
 nmb_rows,nmb_cols = (4,8)       # number of tiles
 
+
+
 list_prompts_all = []
 with open("good_prompts.txt", "r", encoding="utf-8") as file: 
     list_prompts_all = file.read().split('\n')
     
-# Convert to images
-shape_hw = (128, 256)   # image size
     
 list_prompts, list_imgs = get_prompts_and_img()
-gridrenderer = lt.GridRenderer(nmb_rows,nmb_cols,shape_hw)
+gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, shape_hw_prev)
 gridrenderer.update(list_imgs)
 
 show_osc_visualization = False
 
-receiver = lt.OSCReceiver('10.40.48.97')
+receiver = lt.OSCReceiver(ip_address_osc_receiver)
 if show_osc_visualization:
     receiver.start_visualization(shape_hw_vis=(300, 500), nmb_cols_vis=3, nmb_rows_vis=2,backend='opencv')
 
@@ -108,6 +128,7 @@ space_prompt = list_prompts[0]
 # Run space
 idx_cycle = 0
 pb.set_prompt1(get_aug_prompt(space_prompt), negative_prompt)
+pb.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
 latents2 = pb.get_latents()
 
 modulations = {}
