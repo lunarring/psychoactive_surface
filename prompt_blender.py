@@ -148,9 +148,13 @@ class PromptBlender:
         fract = np.clip(fract, 0, 1)
         self.blend_stored_embeddings(fract)
         # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
+        image = self.generate_img(latents, self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds)
+        return image
+    
+    def generate_img(self, latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds):
         image = self.pipe(guidance_scale=0.0, num_inference_steps=self.num_inference_steps, latents=latents, 
-                        prompt_embeds=self.prompt_embeds, negative_prompt_embeds=self.negative_prompt_embeds, 
-                        pooled_prompt_embeds=self.pooled_prompt_embeds, negative_pooled_prompt_embeds=self.negative_pooled_prompt_embeds).images[0]
+                prompt_embeds=prompt_embeds, negative_prompt_embeds=negative_prompt_embeds, 
+                pooled_prompt_embeds=pooled_prompt_embeds, negative_pooled_prompt_embeds=negative_pooled_prompt_embeds).images[0]
         return image
 
 
