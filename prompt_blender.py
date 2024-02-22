@@ -142,15 +142,28 @@ class PromptBlender:
         return blended_prompt_embeds, blended_negative_prompt_embeds, blended_pooled_prompt_embeds, blended_negative_pooled_prompt_embeds
 
 
-    def generate_blended_img(self, fract, latents=None):
+    def generate_blended_img(self, fract, latents=None, modulations={}):
         # Set the embeddings first with blend_stored_embeddings
         torch.manual_seed(420)
         fract = np.clip(fract, 0, 1)
         self.blend_stored_embeddings(fract)
         # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
-        image = self.pipe(guidance_scale=0.0, num_inference_steps=self.num_inference_steps, latents=latents, 
-                        prompt_embeds=self.prompt_embeds, negative_prompt_embeds=self.negative_prompt_embeds, 
-                        pooled_prompt_embeds=self.pooled_prompt_embeds, negative_pooled_prompt_embeds=self.negative_pooled_prompt_embeds).images[0]
+        
+        kwargs = {}
+        kwargs['guidance_scale'] = 0
+        kwargs['num_inference_steps'] = self.num_inference_steps
+        kwargs['latents'] = latents
+        kwargs['prompt_embeds'] = self.prompt_embeds
+        kwargs['negative_prompt_embeds'] = self.negative_prompt_embeds
+        kwargs['pooled_prompt_embeds'] = self.pooled_prompt_embeds
+        kwargs['negative_pooled_prompt_embeds'] = self.negative_pooled_prompt_embeds
+        
+        if len(modulations) > 0:
+            kwargs['modulations'] = modulations
+            
+        image = self.pipe(**kwargs).images[0]
+                
+                
         return image
 
 
@@ -162,8 +175,6 @@ class PromptBlender:
         
 
     def get_latents(self, seed=None):
-        self.w = 64
-        self.h = 64 # 50% chance
         if seed is None:
             seed = np.random.randint(1111111111111111)
         torch.manual_seed(seed)
@@ -299,8 +310,8 @@ if __name__ == "__main__":
 
     pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
     pipe.to("cuda")
-    # pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
-    # pipe.vae = pipe.vae.cuda()
+    pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
+    pipe.vae = pipe.vae.cuda()
     pipe.set_progress_bar_config(disable=True)
     
     if do_compile:
@@ -314,18 +325,18 @@ if __name__ == "__main__":
 
 #%%
     self = PromptBlender(pipe)
-    latents = torch.randn((1,4,64,64)).half().cuda()
+    latents = torch.randn((1,4,64,128)).half().cuda()
     self.set_prompt1("photo of a house")
     self.set_prompt2("painting of a cat")
     img_mix = self.generate_blended_img(0.5, latents)
-    self.num_inference_steps = 2
+    self.num_inference_steps = 1
     akai_lpd8 = lt.MidiInput(device_name="akai_lpd8")
 
 
 
 #%%
     
-    sz = (1024, 1024)
+    sz = (1024, 2048)
     renderer = lt.Renderer(width=sz[1], height=sz[0])
 
     def get_aug_prompt(space_prompt):
