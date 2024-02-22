@@ -46,8 +46,6 @@ pb.w = width_latents
 pb.h = height_latents
 
 
-
-
 # %%
 if not os.path.exists(dir_save):
     os.makedirs(dir_save)
@@ -63,8 +61,9 @@ for prompt in tqdm(list_prompts_all):
 
     fp_img = f"{dir_save}/{hash_code}.jpg"
     fp_embed = f"{dir_save}/{hash_code}.pkl"
+    fp_prompt = f"{dir_save}/{hash_code}.txt"
 
-    if os.path.exists(fp_img) and os.path.exists(fp_embed):
+    if os.path.exists(fp_img) and os.path.exists(fp_embed) and os.path.exists(fp_prompt) :
         continue
 
     latents = pb.get_latents()
@@ -79,6 +78,8 @@ for prompt in tqdm(list_prompts_all):
     }
     torch.save(embeddings, fp_embed)
     image.save(fp_img)
+    with open(fp_prompt, "w", encoding="utf-8") as f:
+        f.write(prompt)
 
 
 
