@@ -166,8 +166,6 @@ class PromptBlender:
         
 
     def get_latents(self, seed=None):
-        self.w = 64
-        self.h = 64 # 50% chance
         if seed is None:
             seed = np.random.randint(1111111111111111)
         torch.manual_seed(seed)
