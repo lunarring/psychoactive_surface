@@ -54,9 +54,6 @@ def get_aug_prompt(prompt):
 
 #%% inits
 meta_input = lt.MetaInput()
-
-# akai_midimix = lt.MidiInput("akai_midimix")
-
 use_compiled_model = False
 
 pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
@@ -133,6 +130,9 @@ embeds_mod_full = pb.get_prompt_embeds("full of electric sparkles")
 pb.num_inference_steps = 1
 
 t_last = time.time()
+
+is_noise_trans = True
+
 while True:
     # cycle back from target to source
     latents1 = latents2.clone()
@@ -140,10 +140,10 @@ while True:
     # get new target
     latents2 = pb.get_latents()
     pb.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
-
     fract = 0
+
     while fract < 1:
-        dt =time.time() - t_last
+        dt = time.time() - t_last
         lt.dynamic_print(f"fps: {1/dt:.1f}")
         t_last = time.time()
         if show_osc_visualization:
@@ -190,7 +190,9 @@ while True:
             modulations['d*_extra_embeds'] = embeds_mod[0]
         
         # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-        d_fract = meta_input.get(akai_lpd8="E0", akai_midimix="A0", val_min=0.0, val_max=0.1, val_default=0)
+        d_fract_noise = meta_input.get(akai_lpd8="E0", akai_midimix="A0", val_min=0.0, val_max=0.1, val_default=0)
+        d_fract_embed = meta_input.get(akai_lpd8="E1", akai_midimix="A1", val_min=0.0, val_max=0.1, val_default=0)
+        
         #d_fract *= osc_low
         
         latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
@@ -209,8 +211,12 @@ while True:
             space_prompt = list_prompts[idx]
             fract = 0
             pb.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
+            is_noise_trans = False
         else:
-            fract += d_fract
+            if is_noise_trans:
+                fract += d_fract_noise
+            else:
+                fract += d_fract_embed
             
         do_new_prompts = meta_input.get(akai_midimix="A4", button_mode="pressed_once")
         
@@ -221,6 +227,7 @@ while True:
             print("done!")
             
     idx_cycle += 1
+    is_noise_trans = True
 
 
 
