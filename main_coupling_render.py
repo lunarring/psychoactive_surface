@@ -14,6 +14,7 @@ from tqdm import tqdm
 from sfast.compilers.diffusion_pipeline_compiler import (compile, CompilationConfig)
 import time
 from u_unet_modulated import forward_modulated
+from u_unet_modulated_compile import forward_modulated_compile
 import u_deepacid
 import hashlib
 from PIL import Image
@@ -106,6 +107,8 @@ pipe.vae = pipe.vae.cuda()
 pipe.set_progress_bar_config(disable=True)
 
 if use_compiled_model:
+    pipe.unet.forward = lambda *args, **kwargs: forward_modulated_compile(pipe.unet, *args, **kwargs)
+    
     pipe.enable_xformers_memory_efficient_attention()
     config = CompilationConfig.Default()
     config.enable_xformers = True
@@ -158,7 +161,7 @@ pb.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
 latents2 = pb.get_latents()
 
 modulations = {}
-if not use_compiled_model:
+if not use_compiled_model or True:
     def noise_mod_func(sample):
         noise =  torch.randn(sample.shape, device=sample.device, generator=torch.Generator(device=sample.device).manual_seed(1))
         return noise    
@@ -180,10 +183,10 @@ t_last = time.time()
 
 sound_feature_names = ['low', 'mid', 'high']
 
-av_router.map_av('low', 'b0_samp')
+# av_router.map_av('low', 'b0_samp')
 av_router.map_av('mid', 'e*_emb')
 av_router.map_av('high', 'd*_emb')
-# av_router.map_av('high', 'fract_decoder_emb')
+av_router.map_av('low', 'fract_decoder_emb')
 
 is_noise_trans = True
 while True:
@@ -217,14 +220,14 @@ while True:
         H2 = meta_input.get(akai_midimix="H2", val_min=0, val_max=10, val_default=1)
         av_router.sound_features['high'] *= H2
         
-        if not use_compiled_model:
-            modulations['b0_samp'] = av_router.sound_features[av_router.visual2sound['b0_samp']]
+        if not use_compiled_model or True:
+            #modulations['b0_samp'] = av_router.sound_features[av_router.visual2sound['b0_samp']]
             
             for i in range(3):
                 modulations[f'e{i}_emb'] = 1 - av_router.sound_features[av_router.visual2sound['e*_emb']]
                 modulations[f'd{i}_emb'] = 1 - av_router.sound_features[av_router.visual2sound['d*_emb']]
                 
-            #modulations['d2_acid'] = acid_func
+            modulations['d2_acid'] = acid_func
             
             # EXPERIMENTAL WHISPER
             do_record_mic = meta_input.get(akai_midimix="A3", button_mode="held_down")
@@ -244,8 +247,8 @@ while True:
                         embeds_mod_full = pb.get_prompt_embeds(prompt)
                     stop_recording = False
             
-            fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
-            #fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
+            # fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
+            fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
             embeds_mod = pb.blend_prompts(pb.embeds1, embeds_mod_full, fract_mod)
             modulations['d*_extra_embeds'] = embeds_mod[0]
         
