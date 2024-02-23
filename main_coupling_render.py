@@ -71,29 +71,7 @@ def get_prompts_and_img():
         list_prompts.append(prompt)
     return list_prompts, list_imgs
 
-def get_aug_prompt(prompt):
-    # mod = ""
-    # if akai_midimix.get("A4", button_mode="toggle"):
-    #     mod = "psychedelic "
-    # if akai_midimix.get("B4", button_mode="toggle"):
-    #     mod = "dark "
-    # if akai_midimix.get("C4", button_mode="toggle"):
-    #     mod = "bright "
-    # if akai_midimix.get("D4", button_mode="toggle"):
-    #     mod = "fractal "
-    # if akai_midimix.get("E4", button_mode="toggle"):
-    #     mod = "organic "
-    # if akai_midimix.get("F4", button_mode="toggle"):
-    #     mod = "metallic "
-    # if akai_midimix.get("G4", button_mode="toggle"):
-    #     mod = "weird and strange "
-    # if akai_midimix.get("H4", button_mode="toggle"):
-    #     mod = "robotic "
 
-    # if mod != "":
-    #     prompt = f"very {mod}, {prompt} looking very {mod}"
-    # print(prompt)
-    return prompt
 
 #%% inits
 meta_input = lt.MetaInput()
@@ -153,8 +131,8 @@ space_prompt = list_prompts[0]
 
 # Run space
 idx_cycle = 0
-pb.set_prompt1(get_aug_prompt(space_prompt), negative_prompt)
-pb.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
+pb.set_prompt1(space_prompt, negative_prompt)
+pb.set_prompt2(space_prompt, negative_prompt)
 latents2 = pb.get_latents()
 
 modulations = {}
@@ -192,7 +170,7 @@ while True:
     pb.embeds1 = pb.embeds2
     # get new target
     latents2 = pb.get_latents()
-    pb.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
+    pb.set_prompt2(space_prompt, negative_prompt)
     fract = 0
 
     while fract < 1:
