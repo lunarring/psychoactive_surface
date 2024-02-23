@@ -90,8 +90,8 @@ def get_cartesian_resample_grid(shape_hw, gpu, use_half_precision=False):
     return cartesian_resample_grid
 
 class AcidMan():
-    def __init__(self, gpu, midi_man, music_man=None, time_man=None):
-        self.midi_man = midi_man
+    def __init__(self, gpu, meta_input, music_man=None, time_man=None):
+        self.meta_input = meta_input
         self.music_man = music_man
         self.gpu = gpu
         self.do_acid = self.do_acid_not_init
@@ -145,7 +145,7 @@ class AcidMan():
             offset = 1
         
         for idx, l in enumerate([chr(x) for x in range(65,73)]):
-            amp = self.midi_man.get(l+"5",val_min=0,val_max=1,val_default=0)
+            amp = self.meta_input.get(l+"5",val_min=0,val_max=1,val_default=0)
             resolution_mods[idx+offset] = amp
             
         return resolution_mods
@@ -170,7 +170,7 @@ class AcidMan():
         # where
         edges = edges.abs()
         edges /= edges.max()
-        factor = int(self.midi_man.get("E5",val_min=1,val_max=100,val_default=25))
+        factor = int(self.meta_inputget(akai_midimix="E5",val_min=1,val_max=100,val_default=25))
         
         if do_apply_kernel_lowres:
             edges = apply_kernel_lowres(edges, self.gkernel, factor, post_kernel=True)
@@ -180,11 +180,11 @@ class AcidMan():
         
         
         edges = 1 - edges
-        edges *= self.midi_man.get("D5",val_min=0.0,val_max=10,val_default=2.5)
+        edges *= self.meta_inputget(akai_midimix="D5",val_min=0.0,val_max=10,val_default=2.5)
         
         
         # which phase
-        factor = int(self.midi_man.get("C5",val_min=1,val_max=100,val_default=50))
+        factor = int(self.meta_inputget(akai_midimix="C5",val_min=1,val_max=100,val_default=50))
         
         if do_apply_kernel_lowres:
             fsum_amp = apply_kernel_lowres(frame_sum, self.gkernel, factor)
@@ -195,13 +195,13 @@ class AcidMan():
         fsum_amp *= 2*np.pi
         
         # xy modulatioself.nS: frequency
-        freq_rot_new = self.midi_man.get("B5",val_min=0,val_max=3,val_default=0.0)
+        freq_rot_new = self.meta_inputget(akai_midimix="B5",val_min=0,val_max=3,val_default=0.0)
         freq_rot_new = freq_rot_new ** 2
         if freq_rot_new != self.freq_rot:
             self.phase_rot += self.kum_t*(self.freq_rot - freq_rot_new)
             self.freq_rot = freq_rot_new    
         
-        # if self.midi_man.get_value("G4"):
+        # if self.meta_input.get_value("G4"):
         #     self.osc_kumulator += dt*self.osc_amp_modulator*1e-3
         
         self.kum_t += self.freq_rot * 0.1
@@ -209,15 +209,15 @@ class AcidMan():
         y_wobble = torch.sin(self.kum_t  + fsum_amp + self.osc_kumulator)
         x_wobble = torch.cos(self.kum_t  + fsum_amp + self.osc_kumulator)
         
-        kibbler_coef = self.midi_man.get(akai_midimix="A5",val_min=0,val_max=10.9, val_default=0.0)
+        kibbler_coef = self.meta_input.get(akai_midimix="A5",val_min=0,val_max=10.9, val_default=0.0)
         
         v_edges = edges * y_wobble
         h_edges = edges * x_wobble
         
-        # if self.midi_man.get_value("D3"):
+        # if self.meta_input.get_value("D3"):
         #     h_edges *= 0
         
-        # if self.midi_man.get_value("D4"):
+        # if self.meta_input.get_value("D4"):
         #     vmod = torch.linspace(1.5,-0.5,v_edges.shape[0], device=v_edges.device)
         #     v_edges *= vmod.unsqueeze(1) 
         #     h_edges *= vmod.unsqueeze(1) 
