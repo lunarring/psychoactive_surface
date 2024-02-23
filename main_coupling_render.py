@@ -248,7 +248,7 @@ while True:
             latents1 = pb.interpolate_spherical(latents1, latents2, fract)
             space_prompt = list_prompts[idx]
             fract = 0
-            pb.set_prompt2(get_aug_prompt(space_prompt), negative_prompt)
+            pb.set_prompt2(space_prompt, negative_prompt)
             is_noise_trans = False
         else:
             if is_noise_trans:
