@@ -1,10 +1,13 @@
+import sys
+sys.path.append('../')
+
 import numpy as np
 import lunar_tools as lt
 import random
 from datasets import load_dataset
 import random
-from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
-from diffusers import AutoencoderTiny
+from mod_diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
+from mod_diffusers import AutoencoderTiny
 import torch
 from prompt_blender import PromptBlender
 from tqdm import tqdm
@@ -26,7 +29,27 @@ ip_address_osc_receiver = '10.40.48.97'
 dir_embds_imgs = "embds_imgs"
 
 #%% aux func
+
+class AudioVisualRouter():
+    def __init__(self, meta_input):
+        self.meta_input = meta_input
+        self.sound_features = {}
+        self.visual2sound = {}
+        
+    def map_av(self, sound_feature_name, visual_effect_name):
+        self.visual2sound[visual_effect_name] = sound_feature_name
+        
+    def update_sound(self, sound_feature_name, value):
+        self.sound_features[sound_feature_name] = value
+        
+    def get_modulation(self, visual_effect_name):
+        return self.sound_features[self.visual2sound[visual_effect_name]]
+        
+
+
 def get_prompts_and_img():
+    negative_prompt = "blurry, lowres, disfigured"
+    
     list_imgs = []
     list_prompts = []
     for i in tqdm(range(nmb_rows*nmb_cols)):
@@ -122,6 +145,9 @@ if show_osc_visualization:
 
 speech_detector = lt.Speech2Text()
 #%%#
+
+av_router = AudioVisualRouter(meta_input)
+
 negative_prompt = "blurry, lowres, disfigured"
 space_prompt = list_prompts[0]
 
@@ -152,8 +178,14 @@ pb.num_inference_steps = 1
 
 t_last = time.time()
 
-is_noise_trans = True
+sound_feature_names = ['low', 'mid', 'high']
 
+av_router.map_av('low', 'b0_samp')
+av_router.map_av('mid', 'e*_emb')
+av_router.map_av('high', 'd*_emb')
+# av_router.map_av('high', 'fract_decoder_emb')
+
+is_noise_trans = True
 while True:
     # cycle back from target to source
     latents1 = latents2.clone()
@@ -169,24 +201,30 @@ while True:
         t_last = time.time()
         if show_osc_visualization:
             receiver.show_visualization()
-        osc_low = receiver.get_last_value("/low")
-        osc_mid = receiver.get_last_value("/mid")
-        osc_high = receiver.get_last_value("/high")
+        
+        # update oscs
+        for name in sound_feature_names:
+            av_router.update_sound(f'{name}', receiver.get_last_value(f"/{name}"))
+            print(f'{name} {receiver.get_last_value(f"/{name}")}')
+        
+        # modulate osc with akai
+        H0 = meta_input.get(akai_midimix="H0", val_min=0, val_max=10, val_default=1)
+        av_router.sound_features['low'] *= H0
+        
+        H1 = meta_input.get(akai_midimix="H1", val_min=0, val_max=10, val_default=1)
+        av_router.sound_features['mid'] *= H1
+        
+        H2 = meta_input.get(akai_midimix="H2", val_min=0, val_max=10, val_default=1)
+        av_router.sound_features['high'] *= H2
         
         if not use_compiled_model:
-            H0 = meta_input.get(akai_midimix="H0", val_min=0, val_max=10, val_default=1)
-            modulations['b0_samp'] = H0 * osc_low
-            # modulations['b0_emb'] = H0 * osc_low
-            #acidman.osc_kumulator += H0 * osc_low
-            
-            H1 = meta_input.get(akai_midimix="H1", val_min=0, val_max=10, val_default=0, variable_name="bobo")
-            H2 = meta_input.get(akai_midimix="H2", val_min=0, val_max=10, val_default=0, variable_name="kobo")
+            modulations['b0_samp'] = av_router.sound_features[av_router.visual2sound['b0_samp']]
             
             for i in range(3):
-                modulations[f'e{i}_emb'] = 1 - (H1*osc_mid)
-                modulations[f'd{i}_emb'] = 1 - (H2*osc_high)
+                modulations[f'e{i}_emb'] = 1 - av_router.sound_features[av_router.visual2sound['e*_emb']]
+                modulations[f'd{i}_emb'] = 1 - av_router.sound_features[av_router.visual2sound['d*_emb']]
                 
-            modulations['d2_acid'] = acid_func
+            #modulations['d2_acid'] = acid_func
             
             # EXPERIMENTAL WHISPER
             do_record_mic = meta_input.get(akai_midimix="A3", button_mode="held_down")
@@ -207,6 +245,7 @@ while True:
                     stop_recording = False
             
             fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
+            #fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
             embeds_mod = pb.blend_prompts(pb.embeds1, embeds_mod_full, fract_mod)
             modulations['d*_extra_embeds'] = embeds_mod[0]
         
