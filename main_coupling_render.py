@@ -7,6 +7,7 @@ import random
 from datasets import load_dataset
 import random
 from mod_diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
+# from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, StableDiffusionXLControlNetPipeline
 from mod_diffusers import AutoencoderTiny
 import torch
 from prompt_blender import PromptBlender
@@ -26,8 +27,9 @@ use_compiled_model = False
 width_latents = 128
 height_latents = 64
 shape_hw_prev = (128, 256)   # image size
-ip_address_osc_receiver = '10.40.48.97'
+ip_address_osc_receiver = '10.40.48.82'
 dir_embds_imgs = "embds_imgs"
+show_osc_visualization = True
 
 #%% aux func
 
@@ -77,7 +79,6 @@ def get_prompts_and_img():
 #%% inits
 meta_input = lt.MetaInput()
 
-
 pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
 pipe.to("cuda")
 pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
@@ -104,10 +105,9 @@ pb.w = width_latents
 pb.h = height_latents
 latents = pb.get_latents()
 secondary_renderer = lt.Renderer(width=1024*2, height=512*2, backend='opencv')
+
 #%% prepare prompt window
 nmb_rows,nmb_cols = (4,8)       # number of tiles
-
-
 
 list_prompts_all = []
 with open("good_prompts.txt", "r", encoding="utf-8") as file: 
@@ -118,7 +118,7 @@ list_prompts, list_imgs = get_prompts_and_img()
 gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, shape_hw_prev)
 gridrenderer.update(list_imgs)
 
-show_osc_visualization = False
+
 
 receiver = lt.OSCReceiver(ip_address_osc_receiver)
 if show_osc_visualization:
@@ -126,7 +126,6 @@ if show_osc_visualization:
 
 speech_detector = lt.Speech2Text()
 #%%#
-
 av_router = AudioVisualRouter(meta_input)
 
 negative_prompt = "blurry, lowres, disfigured"
@@ -180,22 +179,23 @@ while True:
         dt = time.time() - t_last
         lt.dynamic_print(f"fps: {1/dt:.1f}")
         t_last = time.time()
+        show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
         if show_osc_visualization:
             receiver.show_visualization()
         
         # update oscs
         for name in sound_feature_names:
             av_router.update_sound(f'{name}', receiver.get_last_value(f"/{name}"))
-            print(f'{name} {receiver.get_last_value(f"/{name}")}')
+            # print(f'{name} {receiver.get_last_value(f"/{name}")}')
         
         # modulate osc with akai
-        H0 = meta_input.get(akai_midimix="H0", val_min=0, val_max=10, val_default=1)
+        H0 = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=10, val_default=1)
         av_router.sound_features['low'] *= H0
         
-        H1 = meta_input.get(akai_midimix="H1", val_min=0, val_max=10, val_default=1)
+        H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=10, val_default=1)
         av_router.sound_features['mid'] *= H1
         
-        H2 = meta_input.get(akai_midimix="H2", val_min=0, val_max=10, val_default=1)
+        H2 = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=10, val_default=1)
         av_router.sound_features['high'] *= H2
         
         if not use_compiled_model or True:
@@ -208,23 +208,25 @@ while True:
             modulations['d2_acid'] = acid_func
             
             # EXPERIMENTAL WHISPER
-            do_record_mic = meta_input.get(akai_midimix="A3", button_mode="held_down")
+            do_record_mic = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="held_down")
             # do_record_mic = akai_lpd8.get('s', button_mode='pressed_once')
             
-            if do_record_mic:
-                if not speech_detector.audio_recorder.is_recording:
-                    speech_detector.start_recording()
-            elif not do_record_mic:
-                if speech_detector.audio_recorder.is_recording:
-                    try:
+            try:
+                if do_record_mic:
+                    if not speech_detector.audio_recorder.is_recording:
+                        speech_detector.start_recording()
+                elif not do_record_mic:
+                    if speech_detector.audio_recorder.is_recording:
                         prompt = speech_detector.stop_recording()
-                    except Exception as e:
-                        print(f"FAIL {e}")
-                    print(f"New prompt: {prompt}")
-                    if prompt is not None:
-                        embeds_mod_full = pb.get_prompt_embeds(prompt)
-                    stop_recording = False
+                        print(f"New prompt: {prompt}")
+                        if prompt is not None:
+                            embeds_mod_full = pb.get_prompt_embeds(prompt)
+                        stop_recording = False
+            except Exception as e:
+                print(f"FAIL {e}")
             
+            # fract_mod = meta_input.get(akai_midimix="G0", akai_lpd8="F0", val_default=0, val_max=2, val_min=0)
+            #fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
             # fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
             fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
             embeds_mod = pb.blend_prompts(pb.embeds1, embeds_mod_full, fract_mod)
@@ -259,7 +261,7 @@ while True:
             else:
                 fract += d_fract_embed
             
-        do_new_prompts = meta_input.get(akai_midimix="A4", button_mode="pressed_once")
+        do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
         
         if do_new_prompts:
             print("getting new prompts...")
