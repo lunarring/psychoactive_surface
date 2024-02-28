@@ -170,7 +170,7 @@ class AcidMan():
         # where
         edges = edges.abs()
         edges /= edges.max()
-        factor = int(self.meta_inputget(akai_midimix="E5",val_min=1,val_max=100,val_default=25))
+        factor = int(self.meta_input.get(akai_midimix="E5",val_min=1,val_max=100,val_default=25))
         
         if do_apply_kernel_lowres:
             edges = apply_kernel_lowres(edges, self.gkernel, factor, post_kernel=True)
@@ -180,11 +180,11 @@ class AcidMan():
         
         
         edges = 1 - edges
-        edges *= self.meta_inputget(akai_midimix="D5",val_min=0.0,val_max=10,val_default=2.5)
+        edges *= self.meta_input.get(akai_midimix="D5",val_min=0.0,val_max=10,val_default=2.5)
         
         
         # which phase
-        factor = int(self.meta_inputget(akai_midimix="C5",val_min=1,val_max=100,val_default=50))
+        factor = int(self.meta_input.get(akai_midimix="C5",val_min=1,val_max=100,val_default=50))
         
         if do_apply_kernel_lowres:
             fsum_amp = apply_kernel_lowres(frame_sum, self.gkernel, factor)
@@ -195,7 +195,7 @@ class AcidMan():
         fsum_amp *= 2*np.pi
         
         # xy modulatioself.nS: frequency
-        freq_rot_new = self.meta_inputget(akai_midimix="B5",val_min=0,val_max=3,val_default=0.0)
+        freq_rot_new = self.meta_input.get(akai_midimix="B5",val_min=0,val_max=3,val_default=0.0)
         freq_rot_new = freq_rot_new ** 2
         if freq_rot_new != self.freq_rot:
             self.phase_rot += self.kum_t*(self.freq_rot - freq_rot_new)
