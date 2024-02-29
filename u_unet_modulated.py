@@ -1,15 +1,15 @@
 # from unet
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from torch.nn import functional as F
 
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
-from torch.nn import functional as F
 
-from diffusers.models.unet_2d_condition import UNet2DConditionOutput
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.loaders import UNet2DConditionLoadersMixin
+from diffusers.loaders import PeftAdapterMixin, UNet2DConditionLoadersMixin
 from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, deprecate, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.models.activations import get_activation
 from diffusers.models.attention_processor import (
@@ -22,10 +22,10 @@ from diffusers.models.attention_processor import (
 )
 from diffusers.models.embeddings import (
     GaussianFourierProjection,
+    GLIGENTextBoundingboxProjection,
     ImageHintTimeEmbedding,
     ImageProjection,
     ImageTimeEmbedding,
-    PositionNet,
     TextImageProjection,
     TextImageTimeEmbedding,
     TextTimeEmbedding,
@@ -41,14 +41,28 @@ from diffusers.models.unet_2d_blocks import (
     get_up_block,
 )
 
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
 def torch_resample(tex, grid,padding_mode="reflection", mode='bilinear'):
-#    import pdb; pdb.set_trace()
     if len(tex.shape) == 3:                        # add singleton to batch dim
         return F.grid_sample(tex.view((1,)+tex.shape),grid.view((1,)+grid.shape),padding_mode=padding_mode,mode=mode)[0,:,:,:].permute([1,2,0])
     elif len(tex.shape) == 4:
         return F.grid_sample(tex,grid.view((1,)+grid.shape),padding_mode=padding_mode,mode=mode)[0,:,:,:].permute([1,2,0])
     else:
         raise ValueError('torch_resample: bad input dims')
+        
+@dataclass
+class UNet2DConditionOutput(BaseOutput):
+    """
+    The output of [`UNet2DConditionModel`].
+
+    Args:
+        sample (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
+            The hidden states output conditioned on `encoder_hidden_states` input. Output of last layer of model.
+    """
+
+    sample: torch.FloatTensor = None        
 
 def forward_modulated(
     self,
@@ -322,19 +336,21 @@ def forward_modulated(
         down_intrablock_additional_residuals = down_block_additional_residuals
         is_adapter = True
         
+    if cross_attention_kwargs is not None and 'modulations' in cross_attention_kwargs:
+        modulations = cross_attention_kwargs['modulations']
+        cross_attention_kwargs = None
+        
+        
     # modulations
     if modulations is None:
         modulations = {}
     
-    if 'noise_mod_func' in modulations:
-        noise_mod_func = modulations['noise_mod_func']
-        
     down_block_res_samples = (sample,)
     for i, downsample_block in enumerate(self.down_blocks):
         
         if f'e{i}_samp' in modulations:
             noise_coef = modulations[f'e{i}_samp']
-            noise = noise_mod_func(sample)
+            noise = modulations['modulations_noise'][f'e{i}']
             sample += noise * noise_coef
         
         if f'e{i}_emb' in modulations:
@@ -343,7 +359,7 @@ def forward_modulated(
             encoder_state_mod = 1
 
         if f'e{i}_acid' in modulations:
-            amp_field, warp_field = modulations[f'e{i}_acid'](sample)
+            amp_field, warp_field = modulations[f'e{i}_acid']
             sample *= (1+amp_field)            
         
         if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
@@ -385,7 +401,7 @@ def forward_modulated(
         if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
             if 'b0_samp' in modulations:
                 noise_coef = modulations['b0_samp']
-                noise = noise_mod_func(sample)
+                noise = modulations['modulations_noise']['b0']
                 sample += noise * noise_coef
             
             if 'b0_emb' in modulations:
@@ -394,7 +410,7 @@ def forward_modulated(
                 encoder_state_mod = 1
                 
             if 'b0_acid' in modulations:
-                amp_field, warp_field = modulations['b0_acid'](sample)
+                amp_field, warp_field = modulations['b0_acid']
                 
                 # sample *= (1+amp_field*10)
                 sample = torch_resample(sample.float(), ((warp_field * 2) - 1)).permute([2,0,1])[None].half()
@@ -436,7 +452,7 @@ def forward_modulated(
             
         if f'd{i}_samp' in modulations:
             noise_coef = modulations[f'd{i}_samp']
-            noise = noise_mod_func(sample)
+            noise = modulations['modulations_noise'][f'd{i}']
             sample += noise * noise_coef
         
         if f'd{i}_emb' in modulations:
@@ -445,7 +461,7 @@ def forward_modulated(
             encoder_state_mod = 1
             
         if f'd{i}_acid' in modulations:
-            amp_field, warp_field = modulations[f'd{i}_acid'](sample)
+            amp_field, warp_field = modulations[f'd{i}_acid']
             sample *= (1+amp_field)
             
         if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:

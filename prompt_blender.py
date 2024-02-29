@@ -142,7 +142,7 @@ class PromptBlender:
         return blended_prompt_embeds, blended_negative_prompt_embeds, blended_pooled_prompt_embeds, blended_negative_pooled_prompt_embeds
 
 
-    def generate_blended_img(self, fract, latents=None, modulations={}):
+    def generate_blended_img(self, fract, latents=None, cross_attention_kwargs={}):
         # Set the embeddings first with blend_stored_embeddings
         torch.manual_seed(420)
         fract = np.clip(fract, 0, 1)
@@ -158,8 +158,8 @@ class PromptBlender:
         kwargs['pooled_prompt_embeds'] = self.pooled_prompt_embeds
         kwargs['negative_pooled_prompt_embeds'] = self.negative_pooled_prompt_embeds
         
-        if len(modulations) > 0:
-            kwargs['modulations'] = modulations
+        if len(cross_attention_kwargs) > 0:
+            kwargs['cross_attention_kwargs'] = cross_attention_kwargs
             
         image = self.pipe(**kwargs).images[0]
                 
