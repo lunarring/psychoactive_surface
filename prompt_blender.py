@@ -23,6 +23,7 @@ class PromptBlender:
         self.gpu_id = gpu_id
         self.embeds1 = None
         self.embeds2 = None
+        self.embeds_current = None
         self.num_inference_steps = 1
         self.guidance_scale = 0.0
         self.device = "cuda"
@@ -86,6 +87,8 @@ class PromptBlender:
         
     def set_prompt1(self, prompt, negative_prompt=""):
         self.embeds1 = self.get_prompt_embeds(prompt, negative_prompt)
+        if self.embeds_current is None:
+            self.embeds_current = self.embeds1 
     
     def set_prompt2(self, prompt, negative_prompt=""):
         self.embeds2 = self.get_prompt_embeds(prompt, negative_prompt)
@@ -123,7 +126,8 @@ class PromptBlender:
         assert hasattr(self, 'embeds1'), "embeds1 not set. Please set embeds1 before blending."
         assert hasattr(self, 'embeds2'), "embeds2 not set. Please set embeds2 before blending."
         fract = max(0, min(fract, 1))
-        self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds = self.blend_prompts(self.embeds1, self.embeds2, fract)
+        self.embeds_current = self.blend_prompts(self.embeds1, self.embeds2, fract)
+        self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds = self.embeds_current
     
 
 
@@ -149,23 +153,6 @@ class PromptBlender:
         self.blend_stored_embeddings(fract)
         # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
         
-        kwargs = {}
-        kwargs['guidance_scale'] = 0
-        kwargs['num_inference_steps'] = self.num_inference_steps
-        kwargs['latents'] = latents
-        kwargs['prompt_embeds'] = self.prompt_embeds
-        kwargs['negative_prompt_embeds'] = self.negative_prompt_embeds
-        kwargs['pooled_prompt_embeds'] = self.pooled_prompt_embeds
-        kwargs['negative_pooled_prompt_embeds'] = self.negative_pooled_prompt_embeds
-        
-        if len(cross_attention_kwargs) > 0:
-            kwargs['cross_attention_kwargs'] = cross_attention_kwargs
-            
-        image = self.pipe(**kwargs).images[0]
-                
-                
-        return image
-    
     def generate_img(self, latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds):
         image = self.pipe(guidance_scale=0.0, num_inference_steps=self.num_inference_steps, latents=latents, 
                 prompt_embeds=prompt_embeds, negative_prompt_embeds=negative_prompt_embeds, 

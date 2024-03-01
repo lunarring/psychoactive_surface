@@ -19,14 +19,19 @@ import u_deepacid
 import hashlib
 from PIL import Image
 import os
+import cv2
 
 
 #%% VARS
-use_compiled_model = True
-width_latents = 128
-height_latents = 64
-shape_hw_prev = (128, 256)   # image size
-# ip_address_osc_receiver = '10.40.48.82'
+use_compiled_model = False
+use_image2image = False
+res_fact = 1
+width_latents = int(96*res_fact)
+height_latents = int(64*res_fact)
+width_renderer = int(1024*1.5)
+height_renderer = 512*2
+
+shape_hw_prev = (2*height_latents, 2*width_latents)   # image size
 ip_address_osc_receiver = '192.168.50.13'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
@@ -78,7 +83,11 @@ def get_prompts_and_img():
 #%% inits
 meta_input = lt.MetaInput()
 
-pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
+if use_image2image:
+    pipe = AutoPipelineForImage2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
+else:
+    pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
+    
 pipe.to("cuda")
 pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
 pipe.vae = pipe.vae.cuda()
@@ -101,7 +110,7 @@ pb = PromptBlender(pipe)
 pb.w = width_latents
 pb.h = height_latents
 latents = pb.get_latents()
-secondary_renderer = lt.Renderer(width=1024*2, height=512*2, backend='opencv')
+secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, backend='opencv')
 
 def get_sample_shape_unet(coord):
     if coord[0] == 'e':
@@ -117,20 +126,29 @@ def get_sample_shape_unet(coord):
 
 
 #%% prepare prompt window
-nmb_rows,nmb_cols = (4,8)       # number of tiles
+nmb_rows,nmb_cols = (6,6)       # number of tiles
 
 fn_prompts = 'good_prompts'
-fn_prompts = 'gonsalo_prompts'
+# fn_prompts = 'gonsalo_prompts'
+# fn_prompts = 'prompts/underwater'
+# fn_prompts = 'prompts/robot'
+# fn_prompts = 'prompts/water.txt'
 
 list_prompts_all = []
-with open(f"{fn_prompts}.txt", "r", encoding="utf-8") as file: 
+if not fn_prompts.endswith(".txt"):
+    fn_prompts += ".txt"
+with open(f"{fn_prompts}", "r", encoding="utf-8") as file: 
     list_prompts_all = file.read().split('\n')
     
 list_prompts_all = [line for line in list_prompts_all if len(line) > 5]
-    
-list_prompts, list_imgs = get_prompts_and_img()
+
 gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, shape_hw_prev)
-gridrenderer.update(list_imgs)
+
+if not use_image2image:    
+    list_prompts, list_imgs = get_prompts_and_img()
+    gridrenderer.update(list_imgs)
+else:
+    list_prompts = ['strange and beautiful forest']
 
 
 
@@ -161,6 +179,8 @@ for i in range(3):
     modulations_noise[f'd{i}'] = get_noise_for_modulations(get_sample_shape_unet(f'd{i}'))
     
 modulations_noise['b0'] = get_noise_for_modulations(get_sample_shape_unet('b0'))
+modulations['modulations_noise'] = modulations_noise
+
     
 # if not use_compiled_model or True:
 #     def noise_mod_func(sample):
@@ -186,8 +206,16 @@ sound_feature_names = ['low', 'mid', 'high']
 
 # av_router.map_av('low', 'b0_samp')
 av_router.map_av('mid', 'e*_emb')
-av_router.map_av('high', 'd*_emb')
-av_router.map_av('low', 'fract_decoder_emb')
+# av_router.map_av('low', 'd*_emb')
+av_router.map_av('low', 'progress')
+# av_router.map_av('low', 'fract_decoder_emb')
+av_router.map_av('high', 'd0_samp')
+
+if use_image2image:
+    noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
+    fp_image_init = '/home/lugo/Downloads/forest.png'
+    image_init = cv2.imread(fp_image_init)[:,:,::-1]
+    image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
 
 is_noise_trans = True
 while True:
@@ -201,7 +229,7 @@ while True:
 
     while fract < 1:
         dt = time.time() - t_last
-        lt.dynamic_print(f"fps: {1/dt:.1f}")
+        # lt.dynamic_print(f"fps: {1/dt:.1f}")
         t_last = time.time()
         show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
         if show_osc_visualization:
@@ -222,21 +250,24 @@ while True:
         H2 = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=10, val_default=1)
         av_router.sound_features['high'] *= H2
         
-        #modulations['b0_samp'] = av_router.sound_features[av_router.visual2sound['b0_samp']]
-        
-        def get_modulation(self, visual_effect_name):
-            return self.sound_features[self.visual2sound[visual_effect_name]]
-        
         for i in range(3):
             modulations[f'e{i}_emb'] = torch.tensor(1 - av_router.get_modulation('e*_emb'), device=latents1.device)
-            modulations[f'd{i}_emb'] = torch.tensor(1 - av_router.get_modulation('d*_emb'), device=latents1.device)
+            # modulations[f'd{i}_emb'] = torch.tensor(1 - av_router.get_modulation('d*_emb'), device=latents1.device)
+            
+        # modulations['d0_samp'] = torch.tensor(av_router.get_modulation('d0_samp'), device=latents1.device)
+            
             
         amp = 1e-1
-        resample_grid = acidman.do_acid(modulations_noise['d2'][None].float().permute([1,2,0]), amp)
-        amp_mod = (resample_grid - acidman.identity_resample_grid)     
+        
+        # the line below causes memory leak
+        # resample_grid = acidman.do_acid(modulations_noise['d2'][None].float().permute([1,2,0]), amp)
+        # amp_mod = (resample_grid - acidman.identity_resample_grid)     
       
-        acid_fields = amp_mod[:,:,0][None][None], resample_grid
-        modulations['d2_acid'] = acid_fields
+        # acid_fields = amp_mod[:,:,0][None][None], resample_grid
+        # modulations['d2_acid'] = acid_fields
+        
+        
+        
         
         # EXPERIMENTAL WHISPER
         do_record_mic = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="held_down")
@@ -259,41 +290,65 @@ while True:
         # fract_mod = meta_input.get(akai_midimix="G0", akai_lpd8="F0", val_default=0, val_max=2, val_min=0)
         #fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
         # fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
-        fract_mod = av_router.get_modulation('fract_decoder_emb')
-        embeds_mod = pb.blend_prompts(pb.embeds1, embeds_mod_full, fract_mod)
-        modulations['d*_extra_embeds'] = embeds_mod[0]
+        
+        # fract_mod = av_router.get_modulation('fract_decoder_emb')
+        # embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, fract_mod)
+        # modulations['d0_extra_embeds'] = embeds_mod[0]
         
         # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-        d_fract_noise = meta_input.get(akai_lpd8="E0", akai_midimix="A0", val_min=0.0, val_max=0.1, val_default=0)
-        d_fract_embed = meta_input.get(akai_lpd8="E1", akai_midimix="A1", val_min=0.0, val_max=0.1, val_default=0)
-        
-        #d_fract *= osc_low
+        d_fract_noise = meta_input.get(akai_lpd8="E0", akai_midimix="A0", val_min=0.0, val_max=0.02, val_default=0)
+        d_fract_embed = meta_input.get(akai_lpd8="E1", akai_midimix="A1", val_min=0.0, val_max=0.02, val_default=0)
         
         cross_attention_kwargs ={}
         cross_attention_kwargs['modulations'] = modulations        
         
         latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
-        img_mix = pb.generate_blended_img(fract, latents_mix, cross_attention_kwargs=cross_attention_kwargs)
+        pb.generate_blended_img(fract, latents_mix, cross_attention_kwargs=cross_attention_kwargs)
+        
+        kwargs = {}
+        kwargs['guidance_scale'] = 0
+        kwargs['num_inference_steps'] = pb.num_inference_steps
+        kwargs['latents'] = latents
+        kwargs['prompt_embeds'] = pb.prompt_embeds
+        kwargs['negative_prompt_embeds'] = pb.negative_prompt_embeds
+        kwargs['pooled_prompt_embeds'] = pb.pooled_prompt_embeds
+        kwargs['negative_pooled_prompt_embeds'] = pb.negative_pooled_prompt_embeds
+        
+        if len(cross_attention_kwargs) > 0:
+            kwargs['cross_attention_kwargs'] = cross_attention_kwargs
+            
+        if use_image2image:
+            kwargs['image'] = Image.fromarray(image_init)
+            kwargs['num_inference_steps'] = 2
+            kwargs['strength'] = 0.5
+            kwargs['guidance_scale'] = 0.5
+            kwargs['noise_img2img'] = noise_img2img
+            
+        img_mix = pb.pipe(**kwargs).images[0]        
+            
         secondary_renderer.render(img_mix)
         
         # Inject new space
-        m,n = gridrenderer.render()
-        if m != -1 and n != -1:
-            idx = m*nmb_cols + n
-            print(f'tile index: m {m} n {n} prompt {list_prompts[idx]}')
-            
-            # recycle old current embeddings and latents
-            pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
-            latents1 = pb.interpolate_spherical(latents1, latents2, fract)
-            space_prompt = list_prompts[idx]
-            fract = 0
-            pb.set_prompt2(space_prompt, negative_prompt)
-            is_noise_trans = False
-        else:
-            if is_noise_trans:
-                fract += d_fract_noise
+        if not use_image2image:
+            m,n = gridrenderer.render()
+            if m != -1 and n != -1:
+                idx = m*nmb_cols + n
+                print(f'tile index: m {m} n {n} prompt {list_prompts[idx]}')
+                
+                # recycle old current embeddings and latents
+                pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
+                latents1 = pb.interpolate_spherical(latents1, latents2, fract)
+                space_prompt = list_prompts[idx]
+                fract = 0
+                pb.set_prompt2(space_prompt, negative_prompt)
+                is_noise_trans = False
             else:
-                fract += d_fract_embed
+                # regular movement
+                fract_osc = av_router.get_modulation('progress')
+                if is_noise_trans:
+                    fract += d_fract_noise + fract_osc
+                else:
+                    fract += d_fract_embed
             
         do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
         
