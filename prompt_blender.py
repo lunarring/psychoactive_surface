@@ -151,7 +151,6 @@ class PromptBlender:
         torch.manual_seed(420)
         fract = np.clip(fract, 0, 1)
         self.blend_stored_embeddings(fract)
-        # Then call the pipeline to generate the image using the embeddings set by blend_stored_embeddings
         
     def generate_img(self, latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds):
         image = self.pipe(guidance_scale=0.0, num_inference_steps=self.num_inference_steps, latents=latents, 

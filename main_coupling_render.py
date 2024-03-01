@@ -23,7 +23,7 @@ import cv2
 
 
 #%% VARS
-use_compiled_model = False
+use_compiled_model = True
 use_image2image = False
 res_fact = 1
 width_latents = int(96*res_fact)
@@ -129,7 +129,7 @@ def get_sample_shape_unet(coord):
 nmb_rows,nmb_cols = (6,6)       # number of tiles
 
 fn_prompts = 'good_prompts'
-# fn_prompts = 'gonsalo_prompts'
+fn_prompts = 'gonsalo_prompts'
 # fn_prompts = 'prompts/underwater'
 # fn_prompts = 'prompts/robot'
 # fn_prompts = 'prompts/water.txt'
@@ -148,7 +148,9 @@ if not use_image2image:
     list_prompts, list_imgs = get_prompts_and_img()
     gridrenderer.update(list_imgs)
 else:
-    list_prompts = ['strange and beautiful forest']
+    list_prompts = ['water surface ripples 4K high res']
+    fp_movie = '/home/lugo/Downloads/20240301_150735.mp4'
+    vidcap = cv2.VideoCapture(fp_movie)
 
 
 
@@ -198,18 +200,19 @@ modulations['modulations_noise'] = modulations_noise
 
 embeds_mod_full = pb.get_prompt_embeds("full of electric sparkles")
 
+prev_diffusion_output = None
 pb.num_inference_steps = 1
 
 t_last = time.time()
 
-sound_feature_names = ['low', 'mid', 'high']
+sound_feature_names = ['DJ', 'SCRATCH', 'GLASS']
 
-# av_router.map_av('low', 'b0_samp')
-av_router.map_av('mid', 'e*_emb')
-# av_router.map_av('low', 'd*_emb')
-av_router.map_av('low', 'progress')
-# av_router.map_av('low', 'fract_decoder_emb')
-av_router.map_av('high', 'd0_samp')
+# av_router.map_av('SUB', 'b0_samp')
+av_router.map_av('SCRATCH', 'e*_emb')
+# av_router.map_av('SUB', 'd*_emb')
+av_router.map_av('DJ', 'progress')
+# av_router.map_av('SUB', 'fract_decoder_emb')
+av_router.map_av('GLASS', 'd0_samp')
 
 if use_image2image:
     noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
@@ -236,19 +239,21 @@ while True:
             receiver.show_visualization()
         
         # update oscs
+        show_osc_vals = meta_input.get(akai_midimix="C4", button_mode="toggle")
         for name in sound_feature_names:
             av_router.update_sound(f'{name}', receiver.get_last_value(f"/{name}"))
-            # print(f'{name} {receiver.get_last_value(f"/{name}")}')
+            if show_osc_vals:
+                print(f'{name} {receiver.get_last_value(f"/{name}")}')
         
         # modulate osc with akai
-        H0 = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=10, val_default=1)
-        av_router.sound_features['low'] *= H0
+        H0 = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=1, val_default=1)
+        av_router.sound_features['DJ'] *= H0
         
         H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=10, val_default=1)
-        av_router.sound_features['mid'] *= H1
+        av_router.sound_features['SCRATCH'] *= H1
         
         H2 = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=10, val_default=1)
-        av_router.sound_features['high'] *= H2
+        av_router.sound_features['GLASS'] *= H2
         
         for i in range(3):
             modulations[f'e{i}_emb'] = torch.tensor(1 - av_router.get_modulation('e*_emb'), device=latents1.device)
@@ -308,7 +313,7 @@ while True:
         kwargs = {}
         kwargs['guidance_scale'] = 0
         kwargs['num_inference_steps'] = pb.num_inference_steps
-        kwargs['latents'] = latents
+        kwargs['latents'] = latents_mix
         kwargs['prompt_embeds'] = pb.prompt_embeds
         kwargs['negative_prompt_embeds'] = pb.negative_prompt_embeds
         kwargs['pooled_prompt_embeds'] = pb.pooled_prompt_embeds
@@ -318,15 +323,28 @@ while True:
             kwargs['cross_attention_kwargs'] = cross_attention_kwargs
             
         if use_image2image:
+            success, image_init = vidcap.read()
+            image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
+            
+            alpha_acid = meta_input.get(akai_lpd8="E0", akai_midimix="G2", val_min=0.0, val_max=1, val_default=0)
+
+            if prev_diffusion_output is not None:
+                prev_diffusion_output = np.array(prev_diffusion_output)
+                prev_diffusion_output = np.roll(prev_diffusion_output,1,axis=1)
+                image_init = image_init.astype(np.float32) * (1-alpha_acid) + alpha_acid*prev_diffusion_output.astype(np.float32)
+                image_init = image_init.astype(np.uint8)
+            
             kwargs['image'] = Image.fromarray(image_init)
             kwargs['num_inference_steps'] = 2
             kwargs['strength'] = 0.5
             kwargs['guidance_scale'] = 0.5
             kwargs['noise_img2img'] = noise_img2img
             
-        img_mix = pb.pipe(**kwargs).images[0]        
-            
+        img_mix = pb.pipe(**kwargs).images[0]     
         secondary_renderer.render(img_mix)
+        
+        # save the previous diffusion output
+        prev_diffusion_output = img_mix
         
         # Inject new space
         if not use_image2image:
@@ -344,6 +362,7 @@ while True:
                 is_noise_trans = False
             else:
                 # regular movement
+                # fract_osc = 0
                 fract_osc = av_router.get_modulation('progress')
                 if is_noise_trans:
                     fract += d_fract_noise + fract_osc

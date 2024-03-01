@@ -21,11 +21,11 @@ from tqdm import tqdm
 from transformers import AutoModel
 from numpy.linalg import norm
 
-cos_sim = lambda a,b: (a @ b.T) / (norm(a)*norm(b))
+cos_sim = lambda a,b: (a @ b.T)[:,0] / (norm(a,axis=1)*norm(b,axis=1))
+cos_sim_mtx = lambda a,b: (a @ b.T) / (norm(a,axis=1,keepdims=True)*norm(b,axis=1,keepdims=True).T)
 embedding_model = AutoModel.from_pretrained('jinaai/jina-embeddings-v2-base-en', trust_remote_code=True) # trust_remote_code is needed to use the encode method
 embedding_model.to("cuda")
 embeddings = embedding_model.encode(['How is the weather today?', 'What is the current weather like today?'])
-print(cos_sim(embeddings[0], embeddings[1]))
 
 hf_dataset = "FredZhang7/stable-diffusion-prompts-2.47M"
 dataset = load_dataset(hf_dataset)
@@ -52,17 +52,39 @@ else:
     all_embeddings = np.load(fn_embeddings)
     
 #%%# filter the prompts
-prompt_filter = 'mesmerizing underwater world'
+prompt_filter = 'deep space theme'
+
+print(f'filtering the prompts with filter: {prompt_filter}...')
 filter_embeddings = embedding_model.encode([prompt_filter])
 similarity = cos_sim(all_embeddings, filter_embeddings)
 
-nmb_top = 500
-idx_top = np.argsort(similarity)
+nmb_top = 1500
+idx_top = np.argsort(similarity)[::-1][:nmb_top]
 
-list_filtered_prompts
+list_filtered_prompts = np.array(list_all_prompts)[idx_top].tolist()
 
+diversifying_matrix = cos_sim_mtx(all_embeddings[idx_top, :], all_embeddings[idx_top, :])
+np.fill_diagonal(diversifying_matrix, 0)
+
+thresh_reject = 0.95
+list_rejected = []
+
+for i in tqdm(range(nmb_top)):
+    idx_similar = np.where(diversifying_matrix[i,i:] > thresh_reject)[0] + i
+    list_rejected.extend(idx_similar.tolist())
+    
+list_rejected = list(set(list_rejected))
+idx_nonsimilar = np.setdiff1d(range(nmb_top), list_rejected)
+list_filtered_prompts = np.array(list_filtered_prompts)[idx_nonsimilar].tolist()
+
+# a = 'psychedelic chaos, amorphous hallucinations, eerie'
+# b = 'psychedelic chaos, amorphous hallucinations, eerie'
+# embeddings = embedding_model.encode([a,b])
+# cos_sim(embeddings[0:1,:], embeddings[1:,:])
 
 #%% Parameters
+
+print('preparing the grid...')
 
 nmb_cols = 4
 nmb_rows = 4
@@ -83,12 +105,6 @@ pipe.set_progress_bar_config(disable=True)
 
 gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, (height_show, width_show))
 keyb = lt.KeyboardInput()
-
-
-
-
-
-hfghgf
 
 
 #%%
@@ -135,7 +151,7 @@ class PageGenerator:
     def next_page(self):
         indices = random.sample(range(len(self.list_precomputed)), min(len(self.list_precomputed), self.nmb_images - 1))  # Adjust for the white tile
         img_white = Image.new('RGB', (self.width_show, self.height_show), 'white')
-        img_white = lt.add_text_to_image(img_white, "click for next page", font_name="ubuntu/Ubuntu-C", min_width=0.7)
+        img_white = lt.add_text_to_image(img_white, "click for next page", fp_font="ubuntu/Ubuntu-C", min_width=0.7)
         self.selected_images = [img_white]  # Start with a white tile
         self.selected_prompts = ["Next Page"]  # Placeholder prompt for the white tile
         self.selected_images.extend([self.list_precomputed[i] for i in indices])
@@ -144,8 +160,7 @@ class PageGenerator:
         for index in sorted(indices, reverse=True):
             del self.list_precomputed[index]
             del self.prompts_precomputed[index]
-        grid_input = self.gridrenderer.list_to_tensor(self.selected_images)
-        self.gridrenderer.inject_tiles(grid_input)
+        self.gridrenderer.update(self.selected_images)
 
     def save_selected_prompt(self, index):
         if index < len(self.selected_prompts):
@@ -169,8 +184,7 @@ class PageGenerator:
             # Convert blended image back to numpy array and update the selected_images list
             self.selected_images[idx] = np.asarray(blended_image.convert("RGB"))
             # Update the grid with the new blended image
-            grid_input = self.gridrenderer.list_to_tensor(self.selected_images)
-            self.gridrenderer.inject_tiles(grid_input)
+            self.gridrenderer.update(self.selected_images)
 
 # Assuming other necessary components (list_filtered_prompts, pipe, gridrenderer, etc.) are defined elsewhere in the script.
 pg = PageGenerator(list_filtered_prompts, pipe, gridrenderer, nmb_images, width_diffusion, height_diffusion, width_show, height_show, num_inference_steps)
