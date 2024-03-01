@@ -465,13 +465,13 @@ def forward_modulated(
             sample *= (1+amp_field)
             
         if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
-            if f'd*_extra_embeds' in modulations:
+            if f'd{i}_extra_embeds' in modulations:
                 sample = upsample_block(
                     hidden_states=sample,
                     temb=emb*encoder_state_mod,
                     res_hidden_states_tuple=res_samples,
                     #encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states = modulations['d*_extra_embeds'],
+                    encoder_hidden_states = modulations[f'd{i}_extra_embeds'],
                     cross_attention_kwargs=cross_attention_kwargs,
                     upsample_size=upsample_size,
                     attention_mask=attention_mask,
