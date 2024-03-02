@@ -128,7 +128,7 @@ class PromptBlender:
         fract = max(0, min(fract, 1))
         self.embeds_current = self.blend_prompts(self.embeds1, self.embeds2, fract)
         self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds = self.embeds_current
-    
+        return self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds 
 
 
     def blend_prompts(self, embeds1, embeds2, fract):
