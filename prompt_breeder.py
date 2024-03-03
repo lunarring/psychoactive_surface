@@ -159,8 +159,6 @@ if __name__ == "__main__":
             with gr.Column():
                 img0 = gr.Image(label="seed1")
             with gr.Column():
-                output_file = gr.Textbox(label="output filename", value=gh.filename, interactive=True)
-                current_prompt = gr.Textbox(label="current prompt", interactive=True)
                 b_render = gr.Button('just render current prompt')
                 b_gpt = gr.Button('generate prompts', variant='primary')
                 b_bad = gr.Button('reject & check next', variant='primary')
@@ -168,6 +166,8 @@ if __name__ == "__main__":
                 temp = gr.Slider(label="temperature", value=0.7, minimum=0.0, maximum=2.0, step=0.01)
                 subsamp = gr.Slider(label="subsample good_prompts", value=3, minimum=1, maximum=15, step=1)
                 max_tokens = gr.Slider(label="max tokens", value=800, minimum=100, maximum=3000, step=100)
+                output_file = gr.Textbox(label="output filename", value=gh.filename, interactive=True)
+                current_prompt = gr.Textbox(label="current prompt", interactive=True)
             
         with gr.Row():
             instructions = gr.Textbox(label="instructions. use {good_prompts}", value=txt_instructions)
@@ -185,5 +185,5 @@ if __name__ == "__main__":
     if args.server_ip is None:
         demo.launch(share=gh.share, inbrowser=True, inline=False)
     else:
-        demo.launch(share=gh.share, inbrowser=True, inline=False, server_ip=args.server_ip)
+        demo.launch(share=gh.share, inbrowser=True, inline=False, server_name=args.server_ip)
         
