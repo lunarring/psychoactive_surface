@@ -96,15 +96,25 @@ class PromptHolder():
         self.pb = prompt_blender
         self.width_images = shape_hw_prev[1]
         self.height_images = shape_hw_prev[0]
+        self.active_space_idx = 0
         self.dir_embds_imgs = "embds_imgs"
         self.negative_prompt = "blurry, lowres, disfigured"
         if not os.path.exists(dir_embds_imgs):
             os.makedirs(dir_embds_imgs)
         self.init_prompts()
+        self.set_next_space()
+        self.active_space = list(self.prompt_spaces.keys())[self.active_space_idx]
         self.set_random_space()
         
+    def set_next_space(self):
+        self.active_space_idx += 1
+        if self.active_space_idx >= len(self.prompt_spaces.keys()):
+            self.active_space_idx = 0
+        self.active_space = list(self.prompt_spaces.keys())[self.active_space_idx]
+        
     def set_random_space(self):
-        self.active_space = random.choice(list(self.prompt_spaces.keys()))
+        self.active_space_idx = np.random.randint(len(self.prompt_spaces.keys()))
+        self.active_space = list(self.prompt_spaces.keys())[self.active_space_idx]
     
     def prompt2hash(self, prompt):
         hash_object = hashlib.md5(prompt.encode())
@@ -384,27 +394,27 @@ while True:
       
         # acid_fields = amp_mod[:,:,0][None][None], resample_grid
         # modulations['d2_acid'] = acid_fields
-        
-        
+
+            
         
         
         # EXPERIMENTAL WHISPER
-        do_record_mic = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="held_down")
+        # do_record_mic = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="held_down")
         # do_record_mic = akai_lpd8.get('s', button_mode='pressed_once')
         
-        try:
-            if do_record_mic:
-                if not speech_detector.audio_recorder.is_recording:
-                    speech_detector.start_recording()
-            elif not do_record_mic:
-                if speech_detector.audio_recorder.is_recording:
-                    prompt = speech_detector.stop_recording()
-                    print(f"New prompt: {prompt}")
-                    if prompt is not None:
-                        embeds_mod_full = pb.get_prompt_embeds(prompt)
-                    stop_recording = False
-        except Exception as e:
-            print(f"FAIL {e}")
+        # try:
+        #     if do_record_mic:
+        #         if not speech_detector.audio_recorder.is_recording:
+        #             speech_detector.start_recording()
+        #     elif not do_record_mic:
+        #         if speech_detector.audio_recorder.is_recording:
+        #             prompt = speech_detector.stop_recording()
+        #             print(f"New prompt: {prompt}")
+        #             if prompt is not None:
+        #                 embeds_mod_full = pb.get_prompt_embeds(prompt)
+        #             stop_recording = False
+        # except Exception as e:
+        #     print(f"FAIL {e}")
         
         # fract_mod = meta_input.get(akai_midimix="G0", akai_lpd8="F0", val_default=0, val_max=2, val_min=0)
         #fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
@@ -464,16 +474,19 @@ while True:
         if not use_image2image:
             m,n = gridrenderer.render()
             if m != -1 and n != -1:
-                idx = m*nmb_cols + n
-                print(f'tile index: m {m} n {n} prompt {list_prompts[idx]}')
-                
-                # recycle old current embeddings and latents
-                pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
-                latents1 = pb.interpolate_spherical(latents1, latents2, fract)
-                space_prompt = list_prompts[idx]
-                fract = 0
-                pb.set_prompt2(space_prompt, negative_prompt)
-                is_noise_trans = False
+                try:
+                    idx = m*nmb_cols + n
+                    print(f'tile index: m {m} n {n} prompt {list_prompts[idx]}')
+                    
+                    # recycle old current embeddings and latents
+                    pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
+                    latents1 = pb.interpolate_spherical(latents1, latents2, fract)
+                    space_prompt = list_prompts[idx]
+                    fract = 0
+                    pb.set_prompt2(space_prompt, negative_prompt)
+                    is_noise_trans = False
+                except Exception as e:
+                    print("fail to change space: {e}")
             else:
                 # regular movement
                 # fract_osc = 0
@@ -483,13 +496,17 @@ while True:
                 else:
                     fract += d_fract_embed + fract_osc
             
-        do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
-        
-        if do_new_prompts:
-            print("getting new prompts...")
+        do_new_space = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="released_once")
+        if do_new_space:     
+            prompt_holder.set_next_space()
             list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
             gridrenderer.update(list_imgs)
-            print("done!")
+            
+        do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
+        if do_new_prompts:
+            list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
+            gridrenderer.update(list_imgs)
+                
             
     idx_cycle += 1
     is_noise_trans = True
