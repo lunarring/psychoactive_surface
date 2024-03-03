@@ -23,20 +23,31 @@ import cv2
 
 
 #%% VARS
-use_compiled_model = True
+use_compiled_model = False
 use_image2image = False
-res_fact = 1
+res_fact = 1.3
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
-width_renderer = int(1024*1.5)
+width_renderer = int(1024*2)
 height_renderer = 512*2
 
 shape_hw_prev = (2*height_latents, 2*width_latents)   # image size
-ip_address_osc_receiver = '192.168.50.13'
+ip_address_osc_receiver = '192.168.50.130'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
 
 #%% aux func
+def get_sample_shape_unet(coord):
+    if coord[0] == 'e':
+        coef = float(2**int(coord[1]))
+        shape = [int(np.ceil(height_latents/coef)), int(np.ceil(width_latents/coef))]
+    elif coord[0] == 'b':
+        shape = [int(np.ceil(height_latents/4)), int(np.ceil(width_latents/4))]
+    else:
+        coef = float(2**(2-int(coord[1])))
+        shape = [int(np.ceil(height_latents/coef)), int(np.ceil(width_latents/coef))]
+        
+    return shape
 
 class AudioVisualRouter():
     def __init__(self, meta_input):
@@ -55,29 +66,137 @@ class AudioVisualRouter():
         
 
 
-def get_prompts_and_img():
-    negative_prompt = "blurry, lowres, disfigured"
+# def get_prompts_and_img():
+#     negative_prompt = "blurry, lowres, disfigured"
     
-    list_imgs = []
-    list_prompts = []
-    for i in tqdm(range(nmb_rows*nmb_cols)):
-        prompt = random.choice(list_prompts_all)
+#     list_imgs = []
+#     list_prompts = []
+#     for i in tqdm(range(nmb_rows*nmb_cols)):
+#         prompt = random.choice(list_prompts_all)
 
+#         hash_object = hashlib.md5(prompt.encode())
+#         hash_code = hash_object.hexdigest()[:6].upper()
+
+#         fp_img = f"{dir_embds_imgs}/{hash_code}.jpg"
+
+#         if os.path.exists(fp_img):
+#             img_tile = Image.open(fp_img)
+#         else:
+#             latents = pb.get_latents()
+#             prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pb.get_prompt_embeds(prompt, negative_prompt)
+#             img = pb.generate_img(latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds)
+#             img_tile = img.resize(shape_hw_prev[::-1])
+#         list_imgs.append(np.asarray(img_tile))
+#         list_prompts.append(prompt)
+#     return list_prompts, list_imgs
+
+
+class PromptHolder():
+    def __init__(self, prompt_blender, shape_hw_prev):
+        self.pb = prompt_blender
+        self.width_images = shape_hw_prev[1]
+        self.height_images = shape_hw_prev[0]
+        self.dir_embds_imgs = "embds_imgs"
+        self.negative_prompt = "blurry, lowres, disfigured"
+        if not os.path.exists(dir_embds_imgs):
+            os.makedirs(dir_embds_imgs)
+        self.init_prompts()
+        self.set_random_space()
+        
+    def set_random_space(self):
+        self.active_space = random.choice(list(self.prompt_spaces.keys()))
+    
+    def prompt2hash(self, prompt):
         hash_object = hashlib.md5(prompt.encode())
         hash_code = hash_object.hexdigest()[:6].upper()
-
-        fp_img = f"{dir_embds_imgs}/{hash_code}.jpg"
-
-        if os.path.exists(fp_img):
-            img_tile = Image.open(fp_img)
+        return hash_code
+    
+    def prompt2img(self, prompt):
+        hash_code = self.prompt2hash(prompt)
+        if hash_code in self.images.keys():
+            return self.images[hash_code]
         else:
-            latents = pb.get_latents()
-            prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pb.get_prompt_embeds(prompt, negative_prompt)
-            img = pb.generate_img(latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds)
-            img_tile = img.resize(shape_hw_prev[::-1])
-        list_imgs.append(np.asarray(img_tile))
-        list_prompts.append(prompt)
-    return list_prompts, list_imgs
+            return img
+        
+    def get_black_img(self):
+        img = Image.new('RGB', (self.width_images, self.height_images), (0, 0, 0))
+        return img
+        
+        
+    def init_prompts(self):
+        print("prompt holder: init prompts and images!")
+        self.prompt_spaces = {}
+        self.images = {}
+        list_prompt_txts = os.listdir("prompts/")
+        list_prompt_txts = [l for l in list_prompt_txts if l.endswith(".txt")]
+        for fn_prompts in list_prompt_txts:
+            name_space = fn_prompts.split(".txt")[0]
+            list_prompts_all = []
+            try:
+                with open(f"prompts/{fn_prompts}", "r", encoding="utf-8") as file: 
+                    list_prompts_all = file.read().split('\n')
+                self.prompt_spaces[name_space] = list_prompts_all
+                for prompt in tqdm(list_prompts_all, desc=f'loading space: {name_space}'):
+                    img, hash_code = self.load_or_gen_image(prompt)
+                    self.images[hash_code] = img
+                    
+            except Exception as e:
+                print(f"failed: {e}")
+        
+    def load_or_gen_image(self, prompt):
+        hash_code = self.prompt2hash(prompt)
+    
+        fp_img = f"{dir_embds_imgs}/{hash_code}.jpg"
+        fp_embed = f"{dir_embds_imgs}/{hash_code}.pkl"
+        fp_prompt = f"{dir_embds_imgs}/{hash_code}.txt"
+    
+        if os.path.exists(fp_img) and os.path.exists(fp_embed) and os.path.exists(fp_prompt) :
+            image = Image.open(fp_img)
+            image = image.resize((self.width_images, self.height_images))
+            return image, hash_code
+    
+        latents = self.pb.get_latents()
+        prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pb.get_prompt_embeds(prompt, self.negative_prompt)
+        image = pb.generate_img(latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds)
+    
+        embeddings = {
+        "prompt_embeds": prompt_embeds.cpu(),
+        "negative_prompt_embeds": negative_prompt_embeds.cpu(),
+        "pooled_prompt_embeds": pooled_prompt_embeds.cpu(),
+        "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds.cpu()
+        }
+        torch.save(embeddings, fp_embed)
+        image = image.resize((self.width_images, self.height_images))
+        image.save(fp_img)
+        with open(fp_prompt, "w", encoding="utf-8") as f:
+            f.write(prompt)
+        return image, hash_code
+            
+    
+    def get_prompts_and_img(self, nmb_imgs):
+        list_prompts = []
+        list_imgs = []
+        
+        # decide if we take subsequent or random
+        nmb_imgs_space = len(self.prompt_spaces[self.active_space])
+        if nmb_imgs_space < nmb_imgs:
+            idx_imgs = np.arange(nmb_imgs_space)
+        else:
+            idx_imgs = np.random.choice(nmb_imgs_space, nmb_imgs, replace=False)
+            
+        for j in idx_imgs:
+            prompt = self.prompt_spaces[self.active_space][j]
+            image =  self.prompt2img(prompt)
+            
+            list_prompts.append(prompt)
+            list_imgs.append(image)
+        
+        return list_prompts, list_imgs 
+            
+        
+        
+        
+
 
 
 #%% inits
@@ -112,25 +231,17 @@ pb.h = height_latents
 latents = pb.get_latents()
 secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, backend='opencv')
 
-def get_sample_shape_unet(coord):
-    if coord[0] == 'e':
-        coef = float(2**int(coord[1]))
-        shape = [int(np.ceil(height_latents/coef)), int(np.ceil(width_latents/coef))]
-    elif coord[0] == 'b':
-        shape = [int(np.ceil(height_latents/4)), int(np.ceil(width_latents/4))]
-    else:
-        coef = float(2**(2-int(coord[1])))
-        shape = [int(np.ceil(height_latents/coef)), int(np.ceil(width_latents/coef))]
-        
-    return shape
+prompt_holder = PromptHolder(pb, shape_hw_prev)
+
 
 
 #%% prepare prompt window
 nmb_rows,nmb_cols = (6,6)       # number of tiles
 
-fn_prompts = 'good_prompts'
-fn_prompts = 'gonsalo_prompts'
-# fn_prompts = 'prompts/underwater'
+# fn_prompts = 'good_prompts'
+# fn_prompts = 'gonsalo_prompts'
+# fn_prompts = 'gonsalo_prompts2'
+fn_prompts = 'prompts/underwater'
 # fn_prompts = 'prompts/robot'
 # fn_prompts = 'prompts/water.txt'
 
@@ -142,10 +253,13 @@ with open(f"{fn_prompts}", "r", encoding="utf-8") as file:
     
 list_prompts_all = [line for line in list_prompts_all if len(line) > 5]
 
+
+
+
 gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, shape_hw_prev)
 
 if not use_image2image:    
-    list_prompts, list_imgs = get_prompts_and_img()
+    list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
     gridrenderer.update(list_imgs)
 else:
     list_prompts = ['water surface ripples 4K high res']
@@ -154,7 +268,7 @@ else:
 
 
 
-receiver = lt.OSCReceiver(ip_address_osc_receiver)
+receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8004)
 if show_osc_visualization:
     receiver.start_visualization(shape_hw_vis=(300, 500), nmb_cols_vis=3, nmb_rows_vis=2,backend='opencv')
 
@@ -205,14 +319,14 @@ pb.num_inference_steps = 1
 
 t_last = time.time()
 
-sound_feature_names = ['DJ', 'SCRATCH', 'GLASS']
+sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 
 # av_router.map_av('SUB', 'b0_samp')
-av_router.map_av('SCRATCH', 'e*_emb')
+av_router.map_av('DJMID', 'e*_emb')
 # av_router.map_av('SUB', 'd*_emb')
-av_router.map_av('DJ', 'progress')
+av_router.map_av('DJLOW', 'progress')
 # av_router.map_av('SUB', 'fract_decoder_emb')
-av_router.map_av('GLASS', 'd0_samp')
+av_router.map_av('DJHIGH', 'd2_samp')
 
 if use_image2image:
     noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
@@ -232,7 +346,6 @@ while True:
 
     while fract < 1:
         dt = time.time() - t_last
-        # lt.dynamic_print(f"fps: {1/dt:.1f}")
         t_last = time.time()
         show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
         if show_osc_visualization:
@@ -244,22 +357,23 @@ while True:
             av_router.update_sound(f'{name}', receiver.get_last_value(f"/{name}"))
             if show_osc_vals:
                 print(f'{name} {receiver.get_last_value(f"/{name}")}')
+                lt.dynamic_print(f"fps: {1/dt:.1f}")
         
         # modulate osc with akai
         H0 = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=1, val_default=1)
-        av_router.sound_features['DJ'] *= H0
+        av_router.sound_features['DJLOW'] *= H0
         
-        H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=10, val_default=1)
-        av_router.sound_features['SCRATCH'] *= H1
+        H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=1, val_default=1)
+        av_router.sound_features['DJMID'] *= H1
         
-        H2 = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=10, val_default=1)
-        av_router.sound_features['GLASS'] *= H2
+        H2 = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=100, val_default=1)
+        av_router.sound_features['DJHIGH'] *= H2
         
         for i in range(3):
             modulations[f'e{i}_emb'] = torch.tensor(1 - av_router.get_modulation('e*_emb'), device=latents1.device)
             # modulations[f'd{i}_emb'] = torch.tensor(1 - av_router.get_modulation('d*_emb'), device=latents1.device)
             
-        # modulations['d0_samp'] = torch.tensor(av_router.get_modulation('d0_samp'), device=latents1.device)
+        modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
             
             
         amp = 1e-1
@@ -367,13 +481,13 @@ while True:
                 if is_noise_trans:
                     fract += d_fract_noise + fract_osc
                 else:
-                    fract += d_fract_embed
+                    fract += d_fract_embed + fract_osc
             
         do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
         
         if do_new_prompts:
             print("getting new prompts...")
-            list_prompts, list_imgs = get_prompts_and_img()
+            list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
             gridrenderer.update(list_imgs)
             print("done!")
             
