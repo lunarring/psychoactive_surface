@@ -44,10 +44,12 @@ class GradioHolder():
         self.start_time = datetime.now()
         self.filename = "promptbreeder_" + self.start_time.strftime("%y%m%d_%H%M")
         self.idx_prompt = 0 
+        self.width = 512
+        self.height = 512
 
 
     def generate_img(self, prompt):
-        return self.pipe(guidance_scale=0.0, num_inference_steps=1, prompt=prompt).images[0]
+        return self.pipe(guidance_scale=0.0, num_inference_steps=1, prompt=prompt, width=self.width, height=self.height).images[0]
     
     def generate_prompts(self, good_prompts, instructions, temp, subsamp, max_tokens):
 
@@ -114,6 +116,8 @@ class GradioHolder():
         self.current_prompt = current_prompt
         self.idx_prompt += 1
         return img0, current_prompt, good_prompts
+    
+        
 
     def save_prompt_and_gen_next(self, good_prompts, instructions, temp, subsamp):
         good_prompts += f"\n{self.current_prompt}"
@@ -138,25 +142,26 @@ if __name__ == "__main__":
     
     
     
-    # width = 786
-    # height = 512
+    width = 1024
+    height = 512
     num_inference_steps = 1
-    gpt_model = "gpt-3.5-turbo"
+    gpt_model = "gpt-4"
     
     pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16").to("cuda")
     gh = GradioHolder(pipe, gpt_model=gpt_model)
+    gh.width = width
+    gh.height = height
     
     txt_instructions = "You are a brilliant prompt engineer. Here is an example of your work: {good_prompts}. Make a list or more prompts like that, be creative and not repetitive! Don't make a numbered list, just give me the descriptions, without any formatting elements, do it JUST LIKE IN THE EXAMPLES!"
     
-    
     with gr.Blocks() as demo:
-        
         with gr.Row():
             with gr.Column():
                 img0 = gr.Image(label="seed1")
             with gr.Column():
                 output_file = gr.Textbox(label="output filename", value=gh.filename, interactive=True)
-                current_prompt = gr.Textbox(label="last prompt made by GPT", interactive=False)
+                current_prompt = gr.Textbox(label="current prompt", interactive=True)
+                b_render = gr.Button('just render current prompt')
                 b_gpt = gr.Button('generate prompts', variant='primary')
                 b_bad = gr.Button('reject & check next', variant='primary')
                 b_good = gr.Button('accept & check next', variant='primary')
@@ -171,6 +176,7 @@ if __name__ == "__main__":
         with gr.Row():
             generated_prompts = gr.Textbox(label="generated_prompts", value="", interactive=False)
 
+        b_render.click(gh.generate_img, inputs=[current_prompt], outputs=[img0])
         b_gpt.click(gh.generate_prompts, inputs=[good_prompts, instructions, temp, subsamp, max_tokens], outputs=[generated_prompts])
         b_bad.click(gh.reject, inputs=[generated_prompts, good_prompts], outputs=[img0, current_prompt, good_prompts])
         b_good.click(gh.accept, inputs=[generated_prompts, good_prompts], outputs=[img0, current_prompt, good_prompts])
