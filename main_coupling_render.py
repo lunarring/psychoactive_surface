@@ -23,7 +23,7 @@ import cv2
 import matplotlib.pyplot as plt
 
 #%% VARS
-use_compiled_model = True
+use_compiled_model = False
 use_image2image = False
 res_fact = 1.5
 width_latents = int(96*res_fact)
@@ -76,6 +76,9 @@ class PromptHolder():
         self.pb = prompt_blender
         self.width_images = size_img_tiles_hw[1]
         self.height_images = size_img_tiles_hw[0]
+        self.img_spaces = {}
+        self.prompt_spaces = {}
+        self.images = {}
         self.init_buttons()
         self.active_space_idx = 0
         self.dir_embds_imgs = "embds_imgs"
@@ -87,6 +90,9 @@ class PromptHolder():
         self.active_space = list(self.prompt_spaces.keys())[self.active_space_idx]
         self.set_random_space()
         self.show_all_spaces = False
+        self.list_spaces = list(self.prompt_spaces.keys())
+        self.list_spaces.sort()
+        
         
     def init_buttons(self):
         img_black = Image.new('RGB', (self.width_images, self.height_images), (0, 0, 0))
@@ -124,8 +130,7 @@ class PromptHolder():
         
     def init_prompts(self):
         print("prompt holder: init prompts and images!")
-        self.prompt_spaces = {}
-        self.images = {}
+
         list_prompt_txts = os.listdir("prompts/")
         list_prompt_txts = [l for l in list_prompt_txts if l.endswith(".txt")]
         for fn_prompts in list_prompt_txts:
@@ -134,10 +139,14 @@ class PromptHolder():
             try:
                 with open(f"prompts/{fn_prompts}", "r", encoding="utf-8") as file: 
                     list_prompts_all = file.read().split('\n')
+                list_prompts_all = [l for l in list_prompts_all if len(l) > 8]
                 self.prompt_spaces[name_space] = list_prompts_all
                 for prompt in tqdm(list_prompts_all, desc=f'loading space: {name_space}'):
                     img, hash_code = self.load_or_gen_image(prompt)
                     self.images[hash_code] = img
+                # Init space images, just taking the last image!
+                img_space= lt.add_text_to_image(img.copy(), name_space, font_color=(255, 255, 255))
+                self.img_spaces[name_space] = img_space # we always just take the last one
                     
             except Exception as e:
                 print(f"failed: {e}")
@@ -175,8 +184,9 @@ class PromptHolder():
         return image, hash_code
             
     
-    def get_space_imgs(self, nmb_imgs):
+    def get_prompts_imgs_within_space(self, nmb_imgs):
         list_imgs = []
+        list_prompts = []
         
         # decide if we take subsequent or random
         nmb_imgs_space = len(self.prompt_spaces[self.active_space]) - 2 # two buttons exist
@@ -197,35 +207,15 @@ class PromptHolder():
             list_prompts.append(prompt)
             list_imgs.append(image)
 
-        list_prompts = [None]
-        
         return list_prompts, list_imgs 
             
     
-    def get_prompts_and_img(self, nmb_imgs):
-        list_prompts = []
+    def get_imgs_all_spaces(self, nmb_imgs):
         list_imgs = []
-        
-        # decide if we take subsequent or random
-        nmb_imgs_space = len(self.prompt_spaces[self.active_space]) - 2 # two buttons exist
-        if nmb_imgs_space < nmb_imgs:
-            idx_imgs = np.arange(nmb_imgs_space)
-        else:
-            idx_imgs = np.random.choice(nmb_imgs_space, nmb_imgs, replace=False)
+        for name_space in self.list_spaces:
+            list_imgs.append(self.img_spaces[name_space])
+        return list_imgs 
             
-        list_prompts.append("XXX")
-        list_prompts.append("XXX")
-        list_imgs.append(self.button_space)
-        list_imgs.append(self.button_redraw)
-        
-        for j in idx_imgs:
-            prompt = self.prompt_spaces[self.active_space][j]
-            image =  self.prompt2img(prompt)
-            
-            list_prompts.append(prompt)
-            list_imgs.append(image)
-        
-        return list_prompts, list_imgs 
 
 
 
@@ -267,16 +257,20 @@ prompt_holder = PromptHolder(pb, size_img_tiles_hw)
 #%% prepare prompt window
 gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, size_img_tiles_hw)
 
-if not use_image2image:    
-    list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
-    gridrenderer.update(list_imgs)
-else:
-    list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
+if use_image2image:
+    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
     gridrenderer.update(list_imgs)
     # image_init = Image.open("/home/lugo/Downloads/copertina-1.jpg")
     
+    shape_cam=(600,800) 
+    cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
+    cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+else:
     # fp_movie = '/home/lugo/Downloads/20240301_150735.mp4'
-    # vidcap = cv2.VideoCapture(fp_movie)
+    # vidcap = cv2.VideoCapture(fp_movie)    
+    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+    gridrenderer.update(list_imgs)
+
 
 receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8004)
 if show_osc_visualization:
@@ -289,95 +283,95 @@ speech_detector = lt.Speech2Text()
 reference_time = time.time()
 
 #%%#
-shape = (pb.h*8, pb.w*8, 3)  # Shape of the numpy array
-base_rect_image_noise = np.random.randint(0, 64, shape, dtype=np.uint8)
+# shape = (pb.h*8, pb.w*8, 3)  # Shape of the numpy array
+# base_rect_image_noise = np.random.randint(0, 64, shape, dtype=np.uint8)
 
-def initialize_triangles(num_triangles, shape):
-    """
-    Initializes triangles with random colors, speeds, and rotation rates.
+# def initialize_triangles(num_triangles, shape):
+#     """
+#     Initializes triangles with random colors, speeds, and rotation rates.
 
-    Parameters:
-    - num_triangles: int, the number of triangles to initialize.
-    - shape: tuple, the shape of the numpy array (height, width, channels).
+#     Parameters:
+#     - num_triangles: int, the number of triangles to initialize.
+#     - shape: tuple, the shape of the numpy array (height, width, channels).
 
-    Returns:
-    - List of dictionaries, each containing the triangle's properties.
-    """
-    height, width, _ = shape
-    triangles = []
-    for _ in range(num_triangles):
-        center = np.array([np.random.randint(width), np.random.randint(height)])
-        size = np.random.randint(20, 50)
-        vertices = np.array([
-            [center[0] - size, center[1] - size],
-            [center[0] + size, center[1] - size],
-            [center[0], center[1] + size]
-        ])
-        color = tuple(np.random.randint(0, 256, size=3).tolist())
-        speed = np.random.uniform(0.5*0.01, 2.0*0.01)
-        rotation_rate = np.random.uniform(-5, 5)  # degrees per second
-        rotation_rate = np.random.uniform(-1, 1)  # degrees per second
+#     Returns:
+#     - List of dictionaries, each containing the triangle's properties.
+#     """
+#     height, width, _ = shape
+#     triangles = []
+#     for _ in range(num_triangles):
+#         center = np.array([np.random.randint(width), np.random.randint(height)])
+#         size = np.random.randint(20, 50)
+#         vertices = np.array([
+#             [center[0] - size, center[1] - size],
+#             [center[0] + size, center[1] - size],
+#             [center[0], center[1] + size]
+#         ])
+#         color = tuple(np.random.randint(0, 256, size=3).tolist())
+#         speed = np.random.uniform(0.5*0.01, 2.0*0.01)
+#         rotation_rate = np.random.uniform(-5, 5)  # degrees per second
+#         rotation_rate = np.random.uniform(-1, 1)  # degrees per second
 
-        triangles.append({
-            'vertices': vertices,
-            'color': color,
-            'speed': speed,
-            'rotation_rate': rotation_rate,
-            'center': center
-        })
-    return triangles
+#         triangles.append({
+#             'vertices': vertices,
+#             'color': color,
+#             'speed': speed,
+#             'rotation_rate': rotation_rate,
+#             'center': center
+#         })
+#     return triangles
 
-def update_triangle_centers(triangles, elapsed_time, shape):
-    """
-    Updates the center of each triangle based on its speed and the elapsed time,
-    ensuring movement across the screen.
-    """
-    height, width = shape[:2]
-    for triangle in triangles:
-        # Calculate new displacement and update the center position
-        dx = (elapsed_time * triangle['speed']) % width
-        dy = (elapsed_time * triangle['speed'] / 2) % height  # Slower vertical movement
-        new_center_x = (triangle['center'][0] + dx) % width
-        new_center_y = (triangle['center'][1] + dy) % height
-        triangle['center'] = np.array([new_center_x, new_center_y])
+# def update_triangle_centers(triangles, elapsed_time, shape):
+#     """
+#     Updates the center of each triangle based on its speed and the elapsed time,
+#     ensuring movement across the screen.
+#     """
+#     height, width = shape[:2]
+#     for triangle in triangles:
+#         # Calculate new displacement and update the center position
+#         dx = (elapsed_time * triangle['speed']) % width
+#         dy = (elapsed_time * triangle['speed'] / 2) % height  # Slower vertical movement
+#         new_center_x = (triangle['center'][0] + dx) % width
+#         new_center_y = (triangle['center'][1] + dy) % height
+#         triangle['center'] = np.array([new_center_x, new_center_y])
 
-def render_moving_rotating_triangles(shape, triangles):
-    global reference_time
-    img = np.zeros(shape, dtype=np.uint8)
-    elapsed_time = time.time() - reference_time
+# def render_moving_rotating_triangles(shape, triangles):
+#     global reference_time
+#     img = np.zeros(shape, dtype=np.uint8)
+#     elapsed_time = time.time() - reference_time
 
-    # Update triangle centers for movement
-    update_triangle_centers(triangles, elapsed_time, shape)
+#     # Update triangle centers for movement
+#     update_triangle_centers(triangles, elapsed_time, shape)
 
-    for triangle in triangles:
-        angle = (elapsed_time * triangle['rotation_rate']) % 360
+#     for triangle in triangles:
+#         angle = (elapsed_time * triangle['rotation_rate']) % 360
 
-        # Ensure center is a tuple of floats for rotation
-        center_as_floats = tuple(map(float, triangle['center']))
+#         # Ensure center is a tuple of floats for rotation
+#         center_as_floats = tuple(map(float, triangle['center']))
 
-        # Rotation matrix
-        M = cv2.getRotationMatrix2D(center_as_floats, angle, 1.0)
+#         # Rotation matrix
+#         M = cv2.getRotationMatrix2D(center_as_floats, angle, 1.0)
 
-        # Apply rotation to triangle vertices
-        rotated_vertices = cv2.transform(np.array([triangle['vertices']]), M)[0].astype(np.int32)
+#         # Apply rotation to triangle vertices
+#         rotated_vertices = cv2.transform(np.array([triangle['vertices']]), M)[0].astype(np.int32)
 
-        # Draw the triangle
-        cv2.fillConvexPoly(img, rotated_vertices, triangle['color'])
+#         # Draw the triangle
+#         cv2.fillConvexPoly(img, rotated_vertices, triangle['color'])
 
-    return img
+#     return img
 
-# Initialize triangles
-triangles = initialize_triangles(3, shape)
+# # Initialize triangles
+# triangles = initialize_triangles(3, shape)
 
 
-# Example usage
-rect_size = (50*1, 100*1)  # Size of the rectangle2
-speed = 100  # Speed of the rectangle's movement in pixels per second
+# # Example usage
+# rect_size = (50*1, 100*1)  # Size of the rectangle2
+# speed = 100  # Speed of the rectangle's movement in pixels per second
 
-# Call the function to get a single frame
-# frame = render_moving_rectangle(shape, rect_size, speed)
-# plt.imshow(frame)
-# To display this frame, further processing is required, depending on the environment.
+# # Call the function to get a single frame
+# # frame = render_moving_rectangle(shape, rect_size, speed)
+# # plt.imshow(frame)
+# # To display this frame, further processing is required, depending on the environment.
 
 
 
@@ -385,7 +379,7 @@ speed = 100  # Speed of the rectangle's movement in pixels per second
 av_router = AudioVisualRouter(meta_input)
 
 negative_prompt = "blurry, lowres, disfigured"
-space_prompt = list_prompts[0]
+space_prompt = prompt_holder.prompt_spaces[prompt_holder.active_space][0]
 
 # Run space
 idx_cycle = 0
@@ -403,7 +397,7 @@ for i in range(3):
 modulations_noise['b0'] = get_noise_for_modulations(get_sample_shape_unet('b0'))
 modulations['modulations_noise'] = modulations_noise
 
-
+noise_cam = np.random.randn(pb.h*8, pb.w*8, 3).astype(np.float32)*100
 
 embeds_mod_full = pb.get_prompt_embeds("full of electric sparkles")
 
@@ -512,15 +506,26 @@ while True:
         if use_image2image:
             # success, image_init = vidcap.read()
             # image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
-            image_init_input = render_moving_rotating_triangles(shape, triangles)
-            plt.imshow(image_init_input); plt.show(); plt.ion()
-            image_init = image_init_input.copy()
+            # image_init_input = render_moving_rotating_triangles(shape, triangles)
+            # plt.imshow(image_init_input); plt.show(); plt.ion()
+            # image_init = image_init_input.copy()
             # image_init_input = np.roll(image_init_input, 2,axis=0)
+            
+            cam_img = cam.get_img()
+            cam_img = np.flip(cam_img, axis=1)
+            image_init = cv2.resize(cam_img, (pb.w*8, pb.h*8))
+            
+            cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
+            
+            image_init = image_init.astype(np.float32) + cam_noise_coef*noise_cam
+            image_init = np.clip(image_init, 0, 255)
+            image_init = image_init.astype(np.uint8)
             
             alpha_acid = meta_input.get(akai_lpd8="E0", akai_midimix="G2", val_min=0.0, val_max=1, val_default=0)
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
+                prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
                 image_init = image_init.astype(np.float32) * (1-alpha_acid) + alpha_acid*prev_diffusion_output.astype(np.float32)
                 image_init = image_init.astype(np.uint8)
             
@@ -547,10 +552,12 @@ while True:
                     if idx == 0:
                         # move into space view
                         print(f'SHOWING ALL SPACES')
-                        pass
+                        list_imgs = prompt_holder.get_imgs_all_spaces(nmb_cols*nmb_rows)
+                        gridrenderer.update(list_imgs)
+                        prompt_holder.show_all_spaces = True
                     elif idx == 1:
                         print(f'REDRAWING IMAGES FROM SPCACE')
-                        list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
+                        list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
                         gridrenderer.update(list_imgs)
                     else:
                         # recycle old current embeddings and latents
@@ -561,8 +568,19 @@ while True:
                         pb.set_prompt2(space_prompt, negative_prompt)
                         is_noise_trans = False
                         t_prompt_injected = time.time()
+                else:
+                    # space selection
+                    prompt_holder.active_space = prompt_holder.list_spaces[idx]
+                    print(f"new activate space: {prompt_holder.active_space}")
+                    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+                    gridrenderer.update(list_imgs)
+                    prompt_holder.show_all_spaces = False
+                    
+                    
+                    
+                    
             except Exception as e:
-                print("fail to change space: {e}")
+                print(f"fail of click event! {e}")
         else:
             # regular movement
             # fract_osc = 0
@@ -575,7 +593,7 @@ while True:
         do_new_space = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="released_once")
         if do_new_space:     
             prompt_holder.set_next_space()
-            list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
+            list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
             gridrenderer.update(list_imgs)
             
         do_auto_change = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="toggle")
@@ -593,7 +611,7 @@ while True:
         
         # do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
         # if do_new_prompts:
-        #     list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
+        #     list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
         #     gridrenderer.update(list_imgs)
                 
     idx_cycle += 1
