@@ -9,21 +9,16 @@ Created on Mon Mar  4 10:21:13 2024
 import pygame
 import random
 import math
-
-# Initialize Pygame
-pygame.init()
-
-# Window size
-width, height = 800, 600
-screen = pygame.display.set_mode((width, height))
-pygame.display.set_caption("Moving Triangles")
-
+import matplotlib.pyplot as plt
+from pygame.locals import DOUBLEBUF, OPENGL
 
 class Triangle:
-    def __init__(self):
+    def __init__(self, height, width):
         self.color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
         self.points = [(random.randint(100//2, 700//2), random.randint(100//2, 500//2)) for _ in range(3)]
         self.velocity = [random.uniform(-2, 2), random.uniform(-2, 2)]
+        self.height = height
+        self.width = width
         self.angle = 0
         self.rotation_speed = random.uniform(-1e-1, 1e-1)
 
@@ -36,9 +31,9 @@ class Triangle:
             self.points[i] = (x, y)
 
             # Bounce off walls
-            if x <= 0 or x >= width:
+            if x <= 0 or x >= self.width:
                 self.velocity[0] *= -1
-            if y <= 0 or y >= height:
+            if y <= 0 or y >= self.height:
                 self.velocity[1] *= -1
 
     def rotate(self):
@@ -57,30 +52,39 @@ class Triangle:
     def draw(self, surface):
         pygame.draw.polygon(surface, self.color, self.points)
 
-
-def main():
-    clock = pygame.time.Clock()
-    triangles = [Triangle() for _ in range(3)]
-
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-
-        screen.fill((0, 0, 0))  # Clear screen
-
-        for triangle in triangles:
+class TriangleRenderer():
+    def __init__(self):
+        
+        # Initialize Pygame
+        pygame.init()
+        
+        # Window size
+        self.width, self.height = 800, 600
+        self.screen = pygame.display.set_mode((self.width, self.height))
+        # pygame.display.set_caption("Moving Triangles")        
+        
+        clock = pygame.time.Clock()
+        self.triangles = [Triangle(self.height, self.width) for _ in range(3)]
+        
+    def render(self):
+        #%%#
+        self.screen.fill((0, 0, 0))  # Clear screen
+        
+        for triangle in self.triangles:
             triangle.move()
             triangle.rotate()
-            triangle.draw(screen)
+            triangle.draw(self.screen)
+        
+        screen_array = pygame.surfarray.array3d(self.screen)
+        pygame.display.flip()
+        return screen_array
 
-        screen_array = pygame.surfarray.array3d(screen)
-    
-        pygame.display.flip()  # Update the full display
-        clock.tick(60)  # 60 frames per second
+if __name__ == '__main__':
+    triangler = TriangleRenderer()
+    while True:
+        triangler.render()
 
-    pygame.quit()
 
-if __name__ == "__main__":
-    main()
+
+
+
