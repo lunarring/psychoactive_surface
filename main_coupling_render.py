@@ -23,7 +23,7 @@ import cv2
 import matplotlib.pyplot as plt
 
 #%% VARS
-use_compiled_model = False
+use_compiled_model = True
 use_image2image = False
 res_fact = 1.5
 width_latents = int(96*res_fact)
@@ -31,7 +31,8 @@ height_latents = int(64*res_fact)
 width_renderer = int(1024*2)
 height_renderer = 512*2
 
-shape_hw_prev = (2*height_latents, 2*width_latents)   # image size
+size_img_tiles_hw = (150, 300)   # tile image size
+nmb_rows, nmb_cols = (6,6)       # number of tiles
 ip_address_osc_receiver = '192.168.50.130'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
@@ -70,11 +71,12 @@ class AudioVisualRouter():
 
 
 class PromptHolder():
-    def __init__(self, prompt_blender, shape_hw_prev, use_image2image=False):
+    def __init__(self, prompt_blender, size_img_tiles_hw, use_image2image=False):
         self.use_image2image = use_image2image
         self.pb = prompt_blender
-        self.width_images = shape_hw_prev[1]
-        self.height_images = shape_hw_prev[0]
+        self.width_images = size_img_tiles_hw[1]
+        self.height_images = size_img_tiles_hw[0]
+        self.init_buttons()
         self.active_space_idx = 0
         self.dir_embds_imgs = "embds_imgs"
         self.negative_prompt = "blurry, lowres, disfigured"
@@ -84,6 +86,14 @@ class PromptHolder():
         self.set_next_space()
         self.active_space = list(self.prompt_spaces.keys())[self.active_space_idx]
         self.set_random_space()
+        self.show_all_spaces = False
+        
+    def init_buttons(self):
+        img_black = Image.new('RGB', (self.width_images, self.height_images), (0, 0, 0))
+        self.button_redraw = lt.add_text_to_image(img_black, "redraw", font_color=(255, 255, 255))
+        img_black = Image.new('RGB', (self.width_images, self.height_images), (0, 0, 0))
+        self.button_space = lt.add_text_to_image(img_black, "show spaces", font_color=(255, 255, 255))
+        
         
     def set_next_space(self):
         self.active_space_idx += 1
@@ -165,17 +175,49 @@ class PromptHolder():
         return image, hash_code
             
     
-    def get_prompts_and_img(self, nmb_imgs):
-        list_prompts = []
+    def get_space_imgs(self, nmb_imgs):
         list_imgs = []
         
         # decide if we take subsequent or random
-        nmb_imgs_space = len(self.prompt_spaces[self.active_space])
+        nmb_imgs_space = len(self.prompt_spaces[self.active_space]) - 2 # two buttons exist
         if nmb_imgs_space < nmb_imgs:
             idx_imgs = np.arange(nmb_imgs_space)
         else:
             idx_imgs = np.random.choice(nmb_imgs_space, nmb_imgs, replace=False)
             
+        list_prompts.append("XXX")
+        list_prompts.append("XXX")
+        list_imgs.append(self.button_space)
+        list_imgs.append(self.button_redraw)
+        
+        for j in idx_imgs:
+            prompt = self.prompt_spaces[self.active_space][j]
+            image =  self.prompt2img(prompt)
+            
+            list_prompts.append(prompt)
+            list_imgs.append(image)
+
+        list_prompts = [None]
+        
+        return list_prompts, list_imgs 
+            
+    
+    def get_prompts_and_img(self, nmb_imgs):
+        list_prompts = []
+        list_imgs = []
+        
+        # decide if we take subsequent or random
+        nmb_imgs_space = len(self.prompt_spaces[self.active_space]) - 2 # two buttons exist
+        if nmb_imgs_space < nmb_imgs:
+            idx_imgs = np.arange(nmb_imgs_space)
+        else:
+            idx_imgs = np.random.choice(nmb_imgs_space, nmb_imgs, replace=False)
+            
+        list_prompts.append("XXX")
+        list_prompts.append("XXX")
+        list_imgs.append(self.button_space)
+        list_imgs.append(self.button_redraw)
+        
         for j in idx_imgs:
             prompt = self.prompt_spaces[self.active_space][j]
             image =  self.prompt2img(prompt)
@@ -219,31 +261,11 @@ pb.h = height_latents
 latents = pb.get_latents()
 secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, backend='opencv')
 
-prompt_holder = PromptHolder(pb, shape_hw_prev)
+prompt_holder = PromptHolder(pb, size_img_tiles_hw)
 
 
 #%% prepare prompt window
-nmb_rows,nmb_cols = (6,6)       # number of tiles
-
-# fn_prompts = 'good_prompts'
-# fn_prompts = 'gonsalo_prompts'
-# fn_prompts = 'gonsalo_prompts2'
-fn_prompts = 'prompts/underwater'
-# fn_prompts = 'prompts/robot'
-# fn_prompts = 'prompts/water.txt'
-
-list_prompts_all = []
-if not fn_prompts.endswith(".txt"):
-    fn_prompts += ".txt"
-with open(f"{fn_prompts}", "r", encoding="utf-8") as file: 
-    list_prompts_all = file.read().split('\n')
-    
-list_prompts_all = [line for line in list_prompts_all if len(line) > 5]
-
-
-
-
-gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, shape_hw_prev)
+gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, size_img_tiles_hw)
 
 if not use_image2image:    
     list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
@@ -514,21 +536,31 @@ while True:
         # save the previous diffusion output
         prev_diffusion_output = img_mix
         
-        # Inject new space
+        # Handle clicks in gridrenderer
         m,n = gridrenderer.render()
         if m != -1 and n != -1:
             try:
                 idx = m*nmb_cols + n
-                print(f'tile index: m {m} n {n} prompt {list_prompts[idx]}')
+                print(f'tile index {idx}: m {m} n {n}')
                 
-                # recycle old current embeddings and latents
-                pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
-                latents1 = pb.interpolate_spherical(latents1, latents2, fract)
-                space_prompt = list_prompts[idx]
-                fract = 0
-                pb.set_prompt2(space_prompt, negative_prompt)
-                is_noise_trans = False
-                t_prompt_injected = time.time()
+                if not prompt_holder.show_all_spaces:
+                    if idx == 0:
+                        # move into space view
+                        print(f'SHOWING ALL SPACES')
+                        pass
+                    elif idx == 1:
+                        print(f'REDRAWING IMAGES FROM SPCACE')
+                        list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
+                        gridrenderer.update(list_imgs)
+                    else:
+                        # recycle old current embeddings and latents
+                        pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
+                        latents1 = pb.interpolate_spherical(latents1, latents2, fract)
+                        space_prompt = list_prompts[idx]
+                        fract = 0
+                        pb.set_prompt2(space_prompt, negative_prompt)
+                        is_noise_trans = False
+                        t_prompt_injected = time.time()
             except Exception as e:
                 print("fail to change space: {e}")
         else:
