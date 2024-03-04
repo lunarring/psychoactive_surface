@@ -20,18 +20,19 @@ import hashlib
 from PIL import Image
 import os
 import cv2
-
+import matplotlib.pyplot as plt
 
 #%% VARS
 use_compiled_model = False
 use_image2image = False
-res_fact = 1.3
+res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
 width_renderer = int(1024*2)
 height_renderer = 512*2
 
-shape_hw_prev = (2*height_latents, 2*width_latents)   # image size
+size_img_tiles_hw = (150, 300)   # tile image size
+nmb_rows, nmb_cols = (6,6)       # number of tiles
 ip_address_osc_receiver = '192.168.50.130'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
@@ -49,6 +50,10 @@ def get_sample_shape_unet(coord):
         
     return shape
 
+def get_noise_for_modulations(shape):
+    return torch.randn(shape, device=pipe.device, generator=torch.Generator(device=pipe.device).manual_seed(1)).half()
+
+
 class AudioVisualRouter():
     def __init__(self, meta_input):
         self.meta_input = meta_input
@@ -63,39 +68,18 @@ class AudioVisualRouter():
         
     def get_modulation(self, visual_effect_name):
         return self.sound_features[self.visual2sound[visual_effect_name]]
-        
-
-
-# def get_prompts_and_img():
-#     negative_prompt = "blurry, lowres, disfigured"
-    
-#     list_imgs = []
-#     list_prompts = []
-#     for i in tqdm(range(nmb_rows*nmb_cols)):
-#         prompt = random.choice(list_prompts_all)
-
-#         hash_object = hashlib.md5(prompt.encode())
-#         hash_code = hash_object.hexdigest()[:6].upper()
-
-#         fp_img = f"{dir_embds_imgs}/{hash_code}.jpg"
-
-#         if os.path.exists(fp_img):
-#             img_tile = Image.open(fp_img)
-#         else:
-#             latents = pb.get_latents()
-#             prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pb.get_prompt_embeds(prompt, negative_prompt)
-#             img = pb.generate_img(latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds)
-#             img_tile = img.resize(shape_hw_prev[::-1])
-#         list_imgs.append(np.asarray(img_tile))
-#         list_prompts.append(prompt)
-#     return list_prompts, list_imgs
 
 
 class PromptHolder():
-    def __init__(self, prompt_blender, shape_hw_prev):
+    def __init__(self, prompt_blender, size_img_tiles_hw, use_image2image=False):
+        self.use_image2image = use_image2image
         self.pb = prompt_blender
-        self.width_images = shape_hw_prev[1]
-        self.height_images = shape_hw_prev[0]
+        self.width_images = size_img_tiles_hw[1]
+        self.height_images = size_img_tiles_hw[0]
+        self.img_spaces = {}
+        self.prompt_spaces = {}
+        self.images = {}
+        self.init_buttons()
         self.active_space_idx = 0
         self.dir_embds_imgs = "embds_imgs"
         self.negative_prompt = "blurry, lowres, disfigured"
@@ -105,6 +89,17 @@ class PromptHolder():
         self.set_next_space()
         self.active_space = list(self.prompt_spaces.keys())[self.active_space_idx]
         self.set_random_space()
+        self.show_all_spaces = False
+        self.list_spaces = list(self.prompt_spaces.keys())
+        self.list_spaces.sort()
+        
+        
+    def init_buttons(self):
+        img_black = Image.new('RGB', (self.width_images, self.height_images), (0, 0, 0))
+        self.button_redraw = lt.add_text_to_image(img_black, "redraw", font_color=(255, 255, 255))
+        img_black = Image.new('RGB', (self.width_images, self.height_images), (0, 0, 0))
+        self.button_space = lt.add_text_to_image(img_black, "show spaces", font_color=(255, 255, 255))
+        
         
     def set_next_space(self):
         self.active_space_idx += 1
@@ -126,7 +121,7 @@ class PromptHolder():
         if hash_code in self.images.keys():
             return self.images[hash_code]
         else:
-            return img
+            return self.get_black_img()
         
     def get_black_img(self):
         img = Image.new('RGB', (self.width_images, self.height_images), (0, 0, 0))
@@ -135,8 +130,7 @@ class PromptHolder():
         
     def init_prompts(self):
         print("prompt holder: init prompts and images!")
-        self.prompt_spaces = {}
-        self.images = {}
+
         list_prompt_txts = os.listdir("prompts/")
         list_prompt_txts = [l for l in list_prompt_txts if l.endswith(".txt")]
         for fn_prompts in list_prompt_txts:
@@ -145,10 +139,14 @@ class PromptHolder():
             try:
                 with open(f"prompts/{fn_prompts}", "r", encoding="utf-8") as file: 
                     list_prompts_all = file.read().split('\n')
+                list_prompts_all = [l for l in list_prompts_all if len(l) > 8]
                 self.prompt_spaces[name_space] = list_prompts_all
                 for prompt in tqdm(list_prompts_all, desc=f'loading space: {name_space}'):
                     img, hash_code = self.load_or_gen_image(prompt)
                     self.images[hash_code] = img
+                # Init space images, just taking the last image!
+                img_space= lt.add_text_to_image(img.copy(), name_space, font_color=(255, 255, 255))
+                self.img_spaces[name_space] = img_space # we always just take the last one
                     
             except Exception as e:
                 print(f"failed: {e}")
@@ -164,6 +162,9 @@ class PromptHolder():
             image = Image.open(fp_img)
             image = image.resize((self.width_images, self.height_images))
             return image, hash_code
+        
+        if self.use_image2image:
+            return self.get_black_img(), "XXXXXX"
     
         latents = self.pb.get_latents()
         prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pb.get_prompt_embeds(prompt, self.negative_prompt)
@@ -183,29 +184,38 @@ class PromptHolder():
         return image, hash_code
             
     
-    def get_prompts_and_img(self, nmb_imgs):
-        list_prompts = []
+    def get_prompts_imgs_within_space(self, nmb_imgs):
         list_imgs = []
+        list_prompts = []
         
         # decide if we take subsequent or random
-        nmb_imgs_space = len(self.prompt_spaces[self.active_space])
+        nmb_imgs_space = len(self.prompt_spaces[self.active_space]) - 2 # two buttons exist
         if nmb_imgs_space < nmb_imgs:
             idx_imgs = np.arange(nmb_imgs_space)
         else:
             idx_imgs = np.random.choice(nmb_imgs_space, nmb_imgs, replace=False)
             
+        list_prompts.append("XXX")
+        list_prompts.append("XXX")
+        list_imgs.append(self.button_space)
+        list_imgs.append(self.button_redraw)
+        
         for j in idx_imgs:
             prompt = self.prompt_spaces[self.active_space][j]
             image =  self.prompt2img(prompt)
             
             list_prompts.append(prompt)
             list_imgs.append(image)
-        
+
         return list_prompts, list_imgs 
             
-        
-        
-        
+    
+    def get_imgs_all_spaces(self, nmb_imgs):
+        list_imgs = []
+        for name_space in self.list_spaces:
+            list_imgs.append(self.img_spaces[name_space])
+        return list_imgs 
+            
 
 
 
@@ -241,41 +251,25 @@ pb.h = height_latents
 latents = pb.get_latents()
 secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, backend='opencv')
 
-prompt_holder = PromptHolder(pb, shape_hw_prev)
-
+prompt_holder = PromptHolder(pb, size_img_tiles_hw)
 
 
 #%% prepare prompt window
-nmb_rows,nmb_cols = (6,6)       # number of tiles
+gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, size_img_tiles_hw)
 
-# fn_prompts = 'good_prompts'
-# fn_prompts = 'gonsalo_prompts'
-# fn_prompts = 'gonsalo_prompts2'
-fn_prompts = 'prompts/underwater'
-# fn_prompts = 'prompts/robot'
-# fn_prompts = 'prompts/water.txt'
-
-list_prompts_all = []
-if not fn_prompts.endswith(".txt"):
-    fn_prompts += ".txt"
-with open(f"{fn_prompts}", "r", encoding="utf-8") as file: 
-    list_prompts_all = file.read().split('\n')
-    
-list_prompts_all = [line for line in list_prompts_all if len(line) > 5]
-
-
-
-
-gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, shape_hw_prev)
-
-if not use_image2image:    
-    list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
+if use_image2image:
+    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
     gridrenderer.update(list_imgs)
+    # image_init = Image.open("/home/lugo/Downloads/copertina-1.jpg")
+    
+    shape_cam=(600,800) 
+    cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
+    cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 else:
-    list_prompts = ['water surface ripples 4K high res']
-    fp_movie = '/home/lugo/Downloads/20240301_150735.mp4'
-    vidcap = cv2.VideoCapture(fp_movie)
-
+    # fp_movie = '/home/lugo/Downloads/20240301_150735.mp4'
+    # vidcap = cv2.VideoCapture(fp_movie)    
+    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+    gridrenderer.update(list_imgs)
 
 
 receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8004)
@@ -283,11 +277,109 @@ if show_osc_visualization:
     receiver.start_visualization(shape_hw_vis=(300, 500), nmb_cols_vis=3, nmb_rows_vis=2,backend='opencv')
 
 speech_detector = lt.Speech2Text()
+#%%# img2img moving shapes
+
+# Initialize a reference time
+reference_time = time.time()
+
+#%%#
+# shape = (pb.h*8, pb.w*8, 3)  # Shape of the numpy array
+# base_rect_image_noise = np.random.randint(0, 64, shape, dtype=np.uint8)
+
+# def initialize_triangles(num_triangles, shape):
+#     """
+#     Initializes triangles with random colors, speeds, and rotation rates.
+
+#     Parameters:
+#     - num_triangles: int, the number of triangles to initialize.
+#     - shape: tuple, the shape of the numpy array (height, width, channels).
+
+#     Returns:
+#     - List of dictionaries, each containing the triangle's properties.
+#     """
+#     height, width, _ = shape
+#     triangles = []
+#     for _ in range(num_triangles):
+#         center = np.array([np.random.randint(width), np.random.randint(height)])
+#         size = np.random.randint(20, 50)
+#         vertices = np.array([
+#             [center[0] - size, center[1] - size],
+#             [center[0] + size, center[1] - size],
+#             [center[0], center[1] + size]
+#         ])
+#         color = tuple(np.random.randint(0, 256, size=3).tolist())
+#         speed = np.random.uniform(0.5*0.01, 2.0*0.01)
+#         rotation_rate = np.random.uniform(-5, 5)  # degrees per second
+#         rotation_rate = np.random.uniform(-1, 1)  # degrees per second
+
+#         triangles.append({
+#             'vertices': vertices,
+#             'color': color,
+#             'speed': speed,
+#             'rotation_rate': rotation_rate,
+#             'center': center
+#         })
+#     return triangles
+
+# def update_triangle_centers(triangles, elapsed_time, shape):
+#     """
+#     Updates the center of each triangle based on its speed and the elapsed time,
+#     ensuring movement across the screen.
+#     """
+#     height, width = shape[:2]
+#     for triangle in triangles:
+#         # Calculate new displacement and update the center position
+#         dx = (elapsed_time * triangle['speed']) % width
+#         dy = (elapsed_time * triangle['speed'] / 2) % height  # Slower vertical movement
+#         new_center_x = (triangle['center'][0] + dx) % width
+#         new_center_y = (triangle['center'][1] + dy) % height
+#         triangle['center'] = np.array([new_center_x, new_center_y])
+
+# def render_moving_rotating_triangles(shape, triangles):
+#     global reference_time
+#     img = np.zeros(shape, dtype=np.uint8)
+#     elapsed_time = time.time() - reference_time
+
+#     # Update triangle centers for movement
+#     update_triangle_centers(triangles, elapsed_time, shape)
+
+#     for triangle in triangles:
+#         angle = (elapsed_time * triangle['rotation_rate']) % 360
+
+#         # Ensure center is a tuple of floats for rotation
+#         center_as_floats = tuple(map(float, triangle['center']))
+
+#         # Rotation matrix
+#         M = cv2.getRotationMatrix2D(center_as_floats, angle, 1.0)
+
+#         # Apply rotation to triangle vertices
+#         rotated_vertices = cv2.transform(np.array([triangle['vertices']]), M)[0].astype(np.int32)
+
+#         # Draw the triangle
+#         cv2.fillConvexPoly(img, rotated_vertices, triangle['color'])
+
+#     return img
+
+# # Initialize triangles
+# triangles = initialize_triangles(3, shape)
+
+
+# # Example usage
+# rect_size = (50*1, 100*1)  # Size of the rectangle2
+# speed = 100  # Speed of the rectangle's movement in pixels per second
+
+# # Call the function to get a single frame
+# # frame = render_moving_rectangle(shape, rect_size, speed)
+# # plt.imshow(frame)
+# # To display this frame, further processing is required, depending on the environment.
+
+
+
 #%%#
 av_router = AudioVisualRouter(meta_input)
 
 negative_prompt = "blurry, lowres, disfigured"
-space_prompt = list_prompts[0]
+space_prompt = prompt_holder.prompt_spaces[prompt_holder.active_space][0]
 
 # Run space
 idx_cycle = 0
@@ -295,8 +387,6 @@ pb.set_prompt1(space_prompt, negative_prompt)
 pb.set_prompt2(space_prompt, negative_prompt)
 latents2 = pb.get_latents()
 
-def get_noise_for_modulations(shape):
-    return torch.randn(shape, device=pipe.device, generator=torch.Generator(device=pipe.device).manual_seed(1)).half()
 
 modulations = {}
 modulations_noise = {}
@@ -307,20 +397,7 @@ for i in range(3):
 modulations_noise['b0'] = get_noise_for_modulations(get_sample_shape_unet('b0'))
 modulations['modulations_noise'] = modulations_noise
 
-    
-# if not use_compiled_model or True:
-#     def noise_mod_func(sample):
-#         noise =  torch.randn(sample.shape, device=sample.device, generator=torch.Generator(device=sample.device).manual_seed(1))
-#         return noise    
-    
-#     def acid_func(sample):
-#         amp = 1e-1
-#         resample_grid = acidman.do_acid(sample[0].float().permute([1,2,0]), amp)
-#         amp_mod = (resample_grid - acidman.identity_resample_grid)     
-#         return amp_mod[:,:,0][None][None], resample_grid
-#     modulations['noise_mod_func'] = noise_mod_func
-#     modulations['d*_extra_embeds'] = pb.get_prompt_embeds("full of electric sparkles")[0]
-
+noise_cam = np.random.randn(pb.h*8, pb.w*8, 3).astype(np.float32)*100
 
 embeds_mod_full = pb.get_prompt_embeds("full of electric sparkles")
 
@@ -340,11 +417,14 @@ av_router.map_av('DJHIGH', 'd2_samp')
 
 if use_image2image:
     noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
-    fp_image_init = '/home/lugo/Downloads/forest.png'
-    image_init = cv2.imread(fp_image_init)[:,:,::-1]
-    image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
+    fp_image_init = '/home/lugo/Downloads/copertina-1.jpg'
+    image_init_input = cv2.imread(fp_image_init)[:,:,::-1]
+    image_init_input = cv2.resize(image_init_input, (pb.w*8, pb.h*8))
 
 is_noise_trans = True
+
+t_prompt_injected = time.time()
+
 while True:
     # cycle back from target to source
     latents1 = latents2.clone()
@@ -370,13 +450,13 @@ while True:
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
         # modulate osc with akai
-        H0 = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=1, val_default=1)
+        H0 = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
         av_router.sound_features['DJLOW'] *= H0
         
-        H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=1, val_default=1)
+        H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=1, val_default=0)
         av_router.sound_features['DJMID'] *= H1
         
-        H2 = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=100, val_default=1)
+        H2 = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
         av_router.sound_features['DJHIGH'] *= H2
         
         for i in range(3):
@@ -384,38 +464,15 @@ while True:
             # modulations[f'd{i}_emb'] = torch.tensor(1 - av_router.get_modulation('d*_emb'), device=latents1.device)
             
         modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
-            
-            
-        amp = 1e-1
         
-        # the line below causes memory leak
+        # the line below (resample_grid...) causes memory leak
+        # amp = 1e-1
         # resample_grid = acidman.do_acid(modulations_noise['d2'][None].float().permute([1,2,0]), amp)
         # amp_mod = (resample_grid - acidman.identity_resample_grid)     
       
         # acid_fields = amp_mod[:,:,0][None][None], resample_grid
         # modulations['d2_acid'] = acid_fields
-
             
-        
-        
-        # EXPERIMENTAL WHISPER
-        # do_record_mic = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="held_down")
-        # do_record_mic = akai_lpd8.get('s', button_mode='pressed_once')
-        
-        # try:
-        #     if do_record_mic:
-        #         if not speech_detector.audio_recorder.is_recording:
-        #             speech_detector.start_recording()
-        #     elif not do_record_mic:
-        #         if speech_detector.audio_recorder.is_recording:
-        #             prompt = speech_detector.stop_recording()
-        #             print(f"New prompt: {prompt}")
-        #             if prompt is not None:
-        #                 embeds_mod_full = pb.get_prompt_embeds(prompt)
-        #             stop_recording = False
-        # except Exception as e:
-        #     print(f"FAIL {e}")
-        
         # fract_mod = meta_input.get(akai_midimix="G0", akai_lpd8="F0", val_default=0, val_max=2, val_min=0)
         #fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
         # fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
@@ -447,14 +504,28 @@ while True:
             kwargs['cross_attention_kwargs'] = cross_attention_kwargs
             
         if use_image2image:
-            success, image_init = vidcap.read()
-            image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
+            # success, image_init = vidcap.read()
+            # image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
+            # image_init_input = render_moving_rotating_triangles(shape, triangles)
+            # plt.imshow(image_init_input); plt.show(); plt.ion()
+            # image_init = image_init_input.copy()
+            # image_init_input = np.roll(image_init_input, 2,axis=0)
+            
+            cam_img = cam.get_img()
+            cam_img = np.flip(cam_img, axis=1)
+            image_init = cv2.resize(cam_img, (pb.w*8, pb.h*8))
+            
+            cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
+            
+            image_init = image_init.astype(np.float32) + cam_noise_coef*noise_cam
+            image_init = np.clip(image_init, 0, 255)
+            image_init = image_init.astype(np.uint8)
             
             alpha_acid = meta_input.get(akai_lpd8="E0", akai_midimix="G2", val_min=0.0, val_max=1, val_default=0)
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
-                prev_diffusion_output = np.roll(prev_diffusion_output,1,axis=1)
+                prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
                 image_init = image_init.astype(np.float32) * (1-alpha_acid) + alpha_acid*prev_diffusion_output.astype(np.float32)
                 image_init = image_init.astype(np.uint8)
             
@@ -470,44 +541,79 @@ while True:
         # save the previous diffusion output
         prev_diffusion_output = img_mix
         
-        # Inject new space
-        if not use_image2image:
-            m,n = gridrenderer.render()
-            if m != -1 and n != -1:
-                try:
-                    idx = m*nmb_cols + n
-                    print(f'tile index: m {m} n {n} prompt {list_prompts[idx]}')
-                    
-                    # recycle old current embeddings and latents
-                    pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
-                    latents1 = pb.interpolate_spherical(latents1, latents2, fract)
-                    space_prompt = list_prompts[idx]
-                    fract = 0
-                    pb.set_prompt2(space_prompt, negative_prompt)
-                    is_noise_trans = False
-                except Exception as e:
-                    print("fail to change space: {e}")
-            else:
-                # regular movement
-                # fract_osc = 0
-                fract_osc = av_router.get_modulation('progress')
-                if is_noise_trans:
-                    fract += d_fract_noise + fract_osc
+        # Handle clicks in gridrenderer
+        m,n = gridrenderer.render()
+        if m != -1 and n != -1:
+            try:
+                idx = m*nmb_cols + n
+                print(f'tile index {idx}: m {m} n {n}')
+                
+                if not prompt_holder.show_all_spaces:
+                    if idx == 0:
+                        # move into space view
+                        print(f'SHOWING ALL SPACES')
+                        list_imgs = prompt_holder.get_imgs_all_spaces(nmb_cols*nmb_rows)
+                        gridrenderer.update(list_imgs)
+                        prompt_holder.show_all_spaces = True
+                    elif idx == 1:
+                        print(f'REDRAWING IMAGES FROM SPCACE')
+                        list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+                        gridrenderer.update(list_imgs)
+                    else:
+                        # recycle old current embeddings and latents
+                        pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
+                        latents1 = pb.interpolate_spherical(latents1, latents2, fract)
+                        space_prompt = list_prompts[idx]
+                        fract = 0
+                        pb.set_prompt2(space_prompt, negative_prompt)
+                        is_noise_trans = False
+                        t_prompt_injected = time.time()
                 else:
-                    fract += d_fract_embed + fract_osc
+                    # space selection
+                    prompt_holder.active_space = prompt_holder.list_spaces[idx]
+                    print(f"new activate space: {prompt_holder.active_space}")
+                    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+                    gridrenderer.update(list_imgs)
+                    prompt_holder.show_all_spaces = False
+                    
+                    
+                    
+                    
+            except Exception as e:
+                print(f"fail of click event! {e}")
+        else:
+            # regular movement
+            # fract_osc = 0
+            fract_osc = av_router.get_modulation('progress')
+            if is_noise_trans:
+                fract += d_fract_noise + fract_osc
+            else:
+                fract += d_fract_embed + fract_osc
             
         do_new_space = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="released_once")
         if do_new_space:     
             prompt_holder.set_next_space()
-            list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
+            list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
             gridrenderer.update(list_imgs)
             
-        do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
-        if do_new_prompts:
-            list_prompts, list_imgs = prompt_holder.get_prompts_and_img(nmb_cols*nmb_rows)
-            gridrenderer.update(list_imgs)
+        do_auto_change = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="toggle")
+        t_auto_change = meta_input.get(akai_midimix="A2", val_min=1, val_max=10)
+        
+        if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
+            # go to random img
+            
+            space_prompt = random.choice(list_prompts)
+            fract = 0
+            pb.set_prompt2(space_prompt, negative_prompt)
+            is_noise_trans = False
+            t_prompt_injected = time.time()
+            print(f"auto change to: {space_prompt}")
+        
+        # do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
+        # if do_new_prompts:
+        #     list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+        #     gridrenderer.update(list_imgs)
                 
-            
     idx_cycle += 1
     is_noise_trans = True
 
@@ -518,8 +624,46 @@ while True:
 
             
     
+"""
+CEMENTARY
+
+        # EXPERIMENTAL WHISPER
+        # do_record_mic = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="held_down")
+        # do_record_mic = akai_lpd8.get('s', button_mode='pressed_once')
+        
+        # try:
+        #     if do_record_mic:
+        #         if not speech_detector.audio_recorder.is_recording:
+        #             speech_detector.start_recording()
+        #     elif not do_record_mic:
+        #         if speech_detector.audio_recorder.is_recording:
+        #             prompt = speech_detector.stop_recording()
+        #             print(f"New prompt: {prompt}")
+        #             if prompt is not None:
+        #                 embeds_mod_full = pb.get_prompt_embeds(prompt)
+        #             stop_recording = False
+        # except Exception as e:
+        #     print(f"FAIL {e}")
+        
+
     
+# if not use_compiled_model or True:
+#     def noise_mod_func(sample):
+#         noise =  torch.randn(sample.shape, device=sample.device, generator=torch.Generator(device=sample.device).manual_seed(1))
+#         return noise    
     
+#     def acid_func(sample):
+#         amp = 1e-1
+#         resample_grid = acidman.do_acid(sample[0].float().permute([1,2,0]), amp)
+#         amp_mod = (resample_grid - acidman.identity_resample_grid)     
+#         return amp_mod[:,:,0][None][None], resample_grid
+#     modulations['noise_mod_func'] = noise_mod_func
+#     modulations['d*_extra_embeds'] = pb.get_prompt_embeds("full of electric sparkles")[0]
+
+
+
+
+"""
     
     
     
