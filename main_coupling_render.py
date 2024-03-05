@@ -21,7 +21,7 @@ from PIL import Image
 import os
 import cv2
 import matplotlib.pyplot as plt
-
+import torch.nn.functional as F
 #%% VARS
 use_compiled_model = False
 use_image2image = False
@@ -37,7 +37,57 @@ ip_address_osc_receiver = '192.168.50.130'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
 
+
+
+
 #%% aux func
+
+# This should live somewhere else
+def zoom_image_torch(input_tensor, zoom_factor):
+    # Ensure the input is a 4D tensor [batch_size, channels, height, width]
+    if len(input_tensor.shape) == 3:
+        input_tensor = input_tensor.unsqueeze(0)
+
+    do_permute = False
+    if input_tensor.shape[-1] <= 3:
+        do_permute = True
+        input_tensor = input_tensor.permute(0,3,1,2)
+        
+    
+    # Original size
+    original_height, original_width = input_tensor.shape[2], input_tensor.shape[3]
+    
+    # Calculate new size
+    new_height = int(original_height * zoom_factor)
+    new_width = int(original_width * zoom_factor)
+    
+    # Interpolate
+    zoomed_tensor = F.interpolate(input_tensor, size=(new_height, new_width), mode='bilinear', align_corners=False)
+    # zoomed_tensor = F.interpolate(input_tensor, size=(new_width, new_height), mode='bilinear', align_corners=False).permute(1,0,2)
+    
+    # Calculate padding to match original size
+    pad_height = (original_height - new_height) // 2
+    pad_width = (original_width - new_width) // 2
+    
+    # Adjust for even dimensions to avoid negative padding
+    pad_height_extra = original_height - new_height - 2*pad_height
+    pad_width_extra = original_width - new_width - 2*pad_width
+    
+    # Pad to original size
+    if zoom_factor < 1:
+        zoomed_tensor = F.pad(zoomed_tensor, (pad_width, pad_width + pad_width_extra, pad_height, pad_height + pad_height_extra), 'reflect', 0)
+    else:
+        # For zoom_factor > 1, center crop to original dimensions
+        start_row = (zoomed_tensor.shape[2] - original_height) // 2
+        start_col = (zoomed_tensor.shape[3] - original_width) // 2
+        zoomed_tensor = zoomed_tensor[:, :, start_row:start_row + original_height, start_col:start_col + original_width]
+    
+    zoomed_tensor = zoomed_tensor.squeeze(0) # Remove batch dimension before returning
+    if do_permute:
+        zoomed_tensor = zoomed_tensor.permute(1,2,0)  
+    return zoomed_tensor
+
+
 def get_sample_shape_unet(coord):
     if coord[0] == 'e':
         coef = float(2**int(coord[1]))
@@ -53,6 +103,29 @@ def get_sample_shape_unet(coord):
 def get_noise_for_modulations(shape):
     return torch.randn(shape, device=pipe.device, generator=torch.Generator(device=pipe.device).manual_seed(1)).half()
 
+def rotate_hue(image, angle):
+    """
+    Rotate the hue of an image by a specified angle.
+    
+    Parameters:
+    - image: An image in RGB color space.
+    - angle: The angle by which to rotate the hue. Can be positive or negative.
+    
+    Returns:
+    - The image with rotated hue in RGB color space.
+    """
+    # Convert the image from BGR to HSV
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    # Rotate the hue
+    # Hue is represented in OpenCV as a value from 0 to 180 instead of 0 to 360
+    # Therefore, we need to scale the angle accordingly
+    hsv_image[:, :, 0] = (hsv_image[:, :, 0] + (angle / 2)) % 180
+    
+    # Convert back to BGR from HSV
+    rotated_image = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
+    
+    return rotated_image
 
 class AudioVisualRouter():
     def __init__(self, meta_input):
@@ -283,99 +356,6 @@ speech_detector = lt.Speech2Text()
 reference_time = time.time()
 
 #%%#
-# shape = (pb.h*8, pb.w*8, 3)  # Shape of the numpy array
-# base_rect_image_noise = np.random.randint(0, 64, shape, dtype=np.uint8)
-
-# def initialize_triangles(num_triangles, shape):
-#     """
-#     Initializes triangles with random colors, speeds, and rotation rates.
-
-#     Parameters:
-#     - num_triangles: int, the number of triangles to initialize.
-#     - shape: tuple, the shape of the numpy array (height, width, channels).
-
-#     Returns:
-#     - List of dictionaries, each containing the triangle's properties.
-#     """
-#     height, width, _ = shape
-#     triangles = []
-#     for _ in range(num_triangles):
-#         center = np.array([np.random.randint(width), np.random.randint(height)])
-#         size = np.random.randint(20, 50)
-#         vertices = np.array([
-#             [center[0] - size, center[1] - size],
-#             [center[0] + size, center[1] - size],
-#             [center[0], center[1] + size]
-#         ])
-#         color = tuple(np.random.randint(0, 256, size=3).tolist())
-#         speed = np.random.uniform(0.5*0.01, 2.0*0.01)
-#         rotation_rate = np.random.uniform(-5, 5)  # degrees per second
-#         rotation_rate = np.random.uniform(-1, 1)  # degrees per second
-
-#         triangles.append({
-#             'vertices': vertices,
-#             'color': color,
-#             'speed': speed,
-#             'rotation_rate': rotation_rate,
-#             'center': center
-#         })
-#     return triangles
-
-# def update_triangle_centers(triangles, elapsed_time, shape):
-#     """
-#     Updates the center of each triangle based on its speed and the elapsed time,
-#     ensuring movement across the screen.
-#     """
-#     height, width = shape[:2]
-#     for triangle in triangles:
-#         # Calculate new displacement and update the center position
-#         dx = (elapsed_time * triangle['speed']) % width
-#         dy = (elapsed_time * triangle['speed'] / 2) % height  # Slower vertical movement
-#         new_center_x = (triangle['center'][0] + dx) % width
-#         new_center_y = (triangle['center'][1] + dy) % height
-#         triangle['center'] = np.array([new_center_x, new_center_y])
-
-# def render_moving_rotating_triangles(shape, triangles):
-#     global reference_time
-#     img = np.zeros(shape, dtype=np.uint8)
-#     elapsed_time = time.time() - reference_time
-
-#     # Update triangle centers for movement
-#     update_triangle_centers(triangles, elapsed_time, shape)
-
-#     for triangle in triangles:
-#         angle = (elapsed_time * triangle['rotation_rate']) % 360
-
-#         # Ensure center is a tuple of floats for rotation
-#         center_as_floats = tuple(map(float, triangle['center']))
-
-#         # Rotation matrix
-#         M = cv2.getRotationMatrix2D(center_as_floats, angle, 1.0)
-
-#         # Apply rotation to triangle vertices
-#         rotated_vertices = cv2.transform(np.array([triangle['vertices']]), M)[0].astype(np.int32)
-
-#         # Draw the triangle
-#         cv2.fillConvexPoly(img, rotated_vertices, triangle['color'])
-
-#     return img
-
-# # Initialize triangles
-# triangles = initialize_triangles(3, shape)
-
-
-# # Example usage
-# rect_size = (50*1, 100*1)  # Size of the rectangle2
-# speed = 100  # Speed of the rectangle's movement in pixels per second
-
-# # Call the function to get a single frame
-# # frame = render_moving_rectangle(shape, rect_size, speed)
-# # plt.imshow(frame)
-# # To display this frame, further processing is required, depending on the environment.
-
-
-
-#%%#
 av_router = AudioVisualRouter(meta_input)
 
 negative_prompt = "blurry, lowres, disfigured"
@@ -402,6 +382,7 @@ noise_cam = np.random.randn(pb.h*8, pb.w*8, 3).astype(np.float32)*100
 embeds_mod_full = pb.get_prompt_embeds("full of electric sparkles")
 
 prev_diffusion_output = None
+prev_camera_output = None
 pb.num_inference_steps = 1
 
 t_last = time.time()
@@ -409,11 +390,11 @@ t_last = time.time()
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 
 # av_router.map_av('SUB', 'b0_samp')
-av_router.map_av('DJMID', 'e*_emb')
+av_router.map_av('DJMID', 'acid')
 # av_router.map_av('SUB', 'd*_emb')
-av_router.map_av('DJLOW', 'progress')
+av_router.map_av('DJLOW', 'diffusion_noise')
 # av_router.map_av('SUB', 'fract_decoder_emb')
-av_router.map_av('DJHIGH', 'd2_samp')
+av_router.map_av('DJHIGH', 'hue_rot')
 
 if use_image2image:
     noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
@@ -450,20 +431,20 @@ while True:
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
         # modulate osc with akai
-        H0 = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
-        av_router.sound_features['DJLOW'] *= H0
+        low_acid = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=0.1, val_default=0)
+        av_router.sound_features['DJLOW'] *= low_acid
         
-        H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=1, val_default=0)
-        av_router.sound_features['DJMID'] *= H1
+        mid_noise = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=1, val_default=0)
+        av_router.sound_features['DJMID'] *= mid_noise
         
-        H2 = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
-        av_router.sound_features['DJHIGH'] *= H2
+        high_hue_rot = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
+        av_router.sound_features['DJHIGH'] *= high_hue_rot
         
-        for i in range(3):
-            modulations[f'e{i}_emb'] = torch.tensor(1 - av_router.get_modulation('e*_emb'), device=latents1.device)
-            # modulations[f'd{i}_emb'] = torch.tensor(1 - av_router.get_modulation('d*_emb'), device=latents1.device)
+        # for i in range(3):
+        #     modulations[f'e{i}_emb'] = torch.tensor(1 - av_router.get_modulation('acid'), device=latents1.device)
+        #     modulations[f'd{i}_emb'] = torch.tensor(1 - av_router.get_modulation('d*_emb'), device=latents1.device)
             
-        modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
+        # modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
         
         # the line below (resample_grid...) causes memory leak
         # amp = 1e-1
@@ -486,7 +467,7 @@ while True:
         d_fract_embed = meta_input.get(akai_lpd8="E1", akai_midimix="A1", val_min=0.0, val_max=0.02, val_default=0)
         
         cross_attention_kwargs ={}
-        cross_attention_kwargs['modulations'] = modulations        
+        # cross_attention_kwargs['modulations'] = modulations        
         
         latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
         pb.generate_blended_img(fract, latents_mix, cross_attention_kwargs=cross_attention_kwargs)
@@ -504,6 +485,9 @@ while True:
             kwargs['cross_attention_kwargs'] = cross_attention_kwargs
             
         if use_image2image:
+            
+            
+            
             # success, image_init = vidcap.read()
             # image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
             # image_init_input = render_moving_rotating_triangles(shape, triangles)
@@ -512,20 +496,44 @@ while True:
             # image_init_input = np.roll(image_init_input, 2,axis=0)
             
             cam_img = cam.get_img()
-            cam_img = np.flip(cam_img, axis=1)
+            # cam_img = 255 - cam_img
+            # cam_img = np.flip(cam_img, axis=2)
+
+            hue_rot_angle = meta_input.get(akai_lpd8="E0", akai_midimix="B2", val_min=0.0, val_max=255, val_default=0)
+            if hue_rot_angle > 0:
+                cam_img = rotate_hue(cam_img, int(hue_rot_angle))
+
+            # coef_decay = 0.03
+            # if prev_camera_output is not None:
+            #     prev_camera_output = cam_img.astype(np.float32) * coef_decay + prev_camera_output * (1-coef_decay)
+            # else:
+            #     prev_camera_output = cam_img.astype(np.float32)  
+                
+            # cam_img = prev_camera_output
+                
+                
             image_init = cv2.resize(cam_img, (pb.w*8, pb.h*8))
             
             cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
+            cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255
+            
+          
             
             image_init = image_init.astype(np.float32) + cam_noise_coef*noise_cam
             image_init = np.clip(image_init, 0, 255)
             image_init = image_init.astype(np.uint8)
             
             alpha_acid = meta_input.get(akai_lpd8="E0", akai_midimix="G2", val_min=0.0, val_max=1, val_default=0)
+            alpha_acid += av_router.get_modulation('acid') * 10
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
                 prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
+                zoom_factor = meta_input.get(akai_lpd8="E0", akai_midimix="G0", val_min=0.8, val_max=1.2, val_default=1)
+                if zoom_factor != 1:
+                    prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe.device)
+                    prev_diffusion_output = zoom_image_torch(prev_diffusion_output, zoom_factor)
+                    prev_diffusion_output = prev_diffusion_output.cpu().numpy()
                 image_init = image_init.astype(np.float32) * (1-alpha_acid) + alpha_acid*prev_diffusion_output.astype(np.float32)
                 image_init = image_init.astype(np.uint8)
             
@@ -536,10 +544,19 @@ while True:
             kwargs['noise_img2img'] = noise_img2img
             
         img_mix = pb.pipe(**kwargs).images[0]     
-        secondary_renderer.render(img_mix)
-        
+            
+
         # save the previous diffusion output
-        prev_diffusion_output = img_mix
+        img_mix = np.array(img_mix)
+        prev_diffusion_output = img_mix.astype(np.float32)
+        
+        img_mix = rotate_hue(img_mix, av_router.get_modulation('hue_rot'))
+            
+        do_debug_verlay = meta_input.get(akai_lpd8="A0", akai_midimix="H3", button_mode="toggle")
+        if do_debug_verlay:
+            secondary_renderer.render(cam_img)
+        else:
+            secondary_renderer.render(img_mix)
         
         # Handle clicks in gridrenderer
         m,n = gridrenderer.render()
@@ -571,7 +588,7 @@ while True:
                 else:
                     # space selection
                     prompt_holder.active_space = prompt_holder.list_spaces[idx]
-                    print(f"new activate space: {prompt_holder.active_space}")
+                    print(f"new activate space: {prompt_holder.active_space}") 
                     list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
                     gridrenderer.update(list_imgs)
                     prompt_holder.show_all_spaces = False
@@ -584,12 +601,12 @@ while True:
         else:
             # regular movement
             # fract_osc = 0
-            fract_osc = av_router.get_modulation('progress')
+            fract_osc = av_router.get_modulation('diffusion_noise')
             if is_noise_trans:
                 fract += d_fract_noise + fract_osc
             else:
                 fract += d_fract_embed + fract_osc
-            
+                
         do_new_space = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="released_once")
         if do_new_space:     
             prompt_holder.set_next_space()
