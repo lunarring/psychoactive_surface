@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Mar  5 15:26:28 2024
+
+@author: lugo
+"""
+
 import sys
 sys.path.append('../')
 
@@ -24,7 +32,6 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 #%% VARS
 use_compiled_model = False
-use_image2image = False
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -41,6 +48,37 @@ show_osc_visualization = True
 
 
 #%% aux func
+
+shape_cam=(600,800) 
+
+class MovieReaderCustom():
+    r"""
+    Class to read in a movie.
+    """
+
+    def __init__(self, fp_movie):
+        self.load_movie(fp_movie)
+
+    def load_movie(self, fp_movie):
+        self.video_player_object = cv2.VideoCapture(fp_movie)
+        self.nmb_frames = int(self.video_player_object.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.fps_movie = int(30)
+        self.shape = [shape_cam[0], shape_cam[1], 3]
+        self.shape_is_set = False        
+
+    def get_next_frame(self, speed=2):
+        for it in range(speed):
+            success, image = self.video_player_object.read()
+            
+        if success:
+            if not self.shape_is_set:
+                self.shape_is_set = True
+                self.shape = image.shape
+            return image
+        else:
+            print('MovieReaderCustom: move cycle finished, resetting to first frame')
+            self.video_player_object.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            return np.zeros(self.shape)
 
 # This should live somewhere else
 def zoom_image_torch(input_tensor, zoom_factor):
@@ -101,7 +139,7 @@ def get_sample_shape_unet(coord):
     return shape
 
 def get_noise_for_modulations(shape):
-    return torch.randn(shape, device=pipe.device, generator=torch.Generator(device=pipe.device).manual_seed(1)).half()
+    return torch.randn(shape, device=pipe_text2img.device, generator=torch.Generator(device=pipe_text2img.device).manual_seed(1)).half()
 
 def rotate_hue(image, angle):
     """
@@ -295,30 +333,43 @@ class PromptHolder():
 #%% inits
 meta_input = lt.MetaInput()
 
-if use_image2image:
-    pipe = AutoPipelineForImage2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
-else:
-    pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
+pipe_img2img = AutoPipelineForImage2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
+pipe_text2img = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
     
-pipe.to("cuda")
-pipe.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
-pipe.vae = pipe.vae.cuda()
-pipe.set_progress_bar_config(disable=True)
+pipe_text2img.to("cuda")
+pipe_text2img.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
+pipe_text2img.vae = pipe_text2img.vae.cuda()
+pipe_text2img.set_progress_bar_config(disable=True)
 
-pipe.unet.forward = forward_modulated.__get__(pipe.unet, UNet2DConditionModel)
-
+pipe_text2img.unet.forward = forward_modulated.__get__(pipe_text2img.unet, UNet2DConditionModel)
+    
 if use_compiled_model:
-    pipe.enable_xformers_memory_efficient_attention()
+    pipe_text2img.enable_xformers_memory_efficient_attention()
     config = CompilationConfig.Default()
     config.enable_xformers = True
     config.enable_triton = True
     config.enable_cuda_graph = True
-    pipe = compile(pipe, config)
+    pipe_text2img = compile(pipe_text2img, config)
+    
+pipe_img2img.to("cuda")
+pipe_img2img.vae = AutoencoderTiny.from_pretrained('madebyollin/taesdxl', torch_device='cuda', torch_dtype=torch.float16)
+pipe_img2img.vae = pipe_img2img.vae.cuda()
+pipe_img2img.set_progress_bar_config(disable=True)
+
+pipe_img2img.unet.forward = forward_modulated.__get__(pipe_img2img.unet, UNet2DConditionModel)
+    
+if use_compiled_model:    
+    pipe_img2img.enable_xformers_memory_efficient_attention()
+    config = CompilationConfig.Default()
+    config.enable_xformers = True
+    config.enable_triton = True
+    config.enable_cuda_graph = True
+    pipe_img2img = compile(pipe_img2img, config)
 
 acidman = u_deepacid.AcidMan(0, meta_input, None)
 acidman.init('a01')
 
-pb = PromptBlender(pipe)
+pb = PromptBlender(pipe_text2img)
 pb.w = width_latents
 pb.h = height_latents
 latents = pb.get_latents()
@@ -330,20 +381,11 @@ prompt_holder = PromptHolder(pb, size_img_tiles_hw)
 #%% prepare prompt window
 gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, size_img_tiles_hw)
 
-if use_image2image:
-    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
-    gridrenderer.update(list_imgs)
-    # image_init = Image.open("/home/lugo/Downloads/copertina-1.jpg")
+list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+gridrenderer.update(list_imgs)
     
-    shape_cam=(600,800) 
-    cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
-    cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
-else:
-    # fp_movie = '/home/lugo/Downloads/20240301_150735.mp4'
-    # vidcap = cv2.VideoCapture(fp_movie)    
-    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
-    gridrenderer.update(list_imgs)
-
+cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
+cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
 receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8004)
 if show_osc_visualization:
@@ -354,6 +396,25 @@ speech_detector = lt.Speech2Text()
 
 # Initialize a reference time
 reference_time = time.time()
+
+dn_movie = 'psurf_vids'        
+list_fp_movies = ['bangbang_dance_interp_mflow','blue_dancer_interp_mflow',
+                  'multiskeleton_dance_interp_mflow','skeleton_dance_interp_mflow']
+
+fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
+movie_reader = MovieReaderCustom(fp_movie)
+
+# while True:
+#     drive_img = movie_reader.get_next_frame()
+#     secondary_renderer.render(drive_img)
+    
+#     time.sleep(0.06)
+
+
+# GFDGFDG
+    
+    
+
 
 #%%#
 av_router = AudioVisualRouter(meta_input)
@@ -385,6 +446,8 @@ prev_diffusion_output = None
 prev_camera_output = None
 pb.num_inference_steps = 1
 
+noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
+
 t_last = time.time()
 
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
@@ -395,12 +458,6 @@ av_router.map_av('DJMID', 'acid')
 av_router.map_av('DJLOW', 'diffusion_noise')
 # av_router.map_av('SUB', 'fract_decoder_emb')
 av_router.map_av('DJHIGH', 'hue_rot')
-
-if use_image2image:
-    noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
-    fp_image_init = '/home/lugo/Downloads/copertina-1.jpg'
-    image_init_input = cv2.imread(fp_image_init)[:,:,::-1]
-    image_init_input = cv2.resize(image_init_input, (pb.w*8, pb.h*8))
 
 is_noise_trans = True
 
@@ -421,6 +478,8 @@ while True:
         show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
         if show_osc_visualization:
             receiver.show_visualization()
+            
+        use_image2image = meta_input.get(akai_midimix="G3", button_mode="toggle")
         
         # update oscs
         show_osc_vals = meta_input.get(akai_midimix="C4", button_mode="toggle")
@@ -440,10 +499,6 @@ while True:
         high_hue_rot = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
         av_router.sound_features['DJHIGH'] *= high_hue_rot
         
-        # for i in range(3):
-        #     modulations[f'e{i}_emb'] = torch.tensor(1 - av_router.get_modulation('acid'), device=latents1.device)
-        #     modulations[f'd{i}_emb'] = torch.tensor(1 - av_router.get_modulation('d*_emb'), device=latents1.device)
-            
         # modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
         
         # the line below (resample_grid...) causes memory leak
@@ -458,16 +513,22 @@ while True:
         #fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
         # fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
         
-        # fract_mod = av_router.get_modulation('fract_decoder_emb')
-        # embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, fract_mod)
-        # modulations['d0_extra_embeds'] = embeds_mod[0]
+        fract_emb = meta_input.get(akai_midimix="B5", akai_lpd8="D0", val_min=0, val_max=1, val_default=0)
+        if fract_emb > 0:
+            for i in range(3):
+                modulations[f'd{i}_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
+        
+        fract_decoder_emb = meta_input.get(akai_midimix="A5", akai_lpd8="D0", val_min=0, val_max=10, val_default=0)
+        if fract_decoder_emb > 0:
+            embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, fract_decoder_emb)
+            modulations['d0_extra_embeds'] = embeds_mod[0]
         
         # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
         d_fract_noise = meta_input.get(akai_lpd8="E0", akai_midimix="A0", val_min=0.0, val_max=0.02, val_default=0)
         d_fract_embed = meta_input.get(akai_lpd8="E1", akai_midimix="A1", val_min=0.0, val_max=0.02, val_default=0)
         
         cross_attention_kwargs ={}
-        # cross_attention_kwargs['modulations'] = modulations        
+        cross_attention_kwargs['modulations'] = modulations        
         
         latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
         pb.generate_blended_img(fract, latents_mix, cross_attention_kwargs=cross_attention_kwargs)
@@ -485,9 +546,6 @@ while True:
             kwargs['cross_attention_kwargs'] = cross_attention_kwargs
             
         if use_image2image:
-            
-            
-            
             # success, image_init = vidcap.read()
             # image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
             # image_init_input = render_moving_rotating_triangles(shape, triangles)
@@ -495,29 +553,21 @@ while True:
             # image_init = image_init_input.copy()
             # image_init_input = np.roll(image_init_input, 2,axis=0)
             
-            cam_img = cam.get_img()
-            # cam_img = 255 - cam_img
-            # cam_img = np.flip(cam_img, axis=2)
-
+            use_capture_dev = meta_input.get(akai_midimix="G4", button_mode="toggle")
+            if use_capture_dev:
+                drive_img = cam.get_img()
+            else:
+                drive_img = movie_reader.get_next_frame(speed=4)
+                drive_img = np.flip(drive_img, axis=2)
+            
             hue_rot_angle = meta_input.get(akai_lpd8="E0", akai_midimix="B2", val_min=0.0, val_max=255, val_default=0)
             if hue_rot_angle > 0:
-                cam_img = rotate_hue(cam_img, int(hue_rot_angle))
+                drive_img = rotate_hue(drive_img, int(hue_rot_angle))
 
-            # coef_decay = 0.03
-            # if prev_camera_output is not None:
-            #     prev_camera_output = cam_img.astype(np.float32) * coef_decay + prev_camera_output * (1-coef_decay)
-            # else:
-            #     prev_camera_output = cam_img.astype(np.float32)  
-                
-            # cam_img = prev_camera_output
-                
-                
-            image_init = cv2.resize(cam_img, (pb.w*8, pb.h*8))
+            image_init = cv2.resize(drive_img, (pb.w*8, pb.h*8))
             
             cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
             cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255
-            
-          
             
             image_init = image_init.astype(np.float32) + cam_noise_coef*noise_cam
             image_init = np.clip(image_init, 0, 255)
@@ -529,9 +579,9 @@ while True:
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
                 prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
-                zoom_factor = meta_input.get(akai_lpd8="E0", akai_midimix="G0", val_min=0.8, val_max=1.2, val_default=1)
+                zoom_factor = meta_input.get(akai_lpd8="E0", akai_midimix="E0", val_min=0.8, val_max=1.2, val_default=1)
                 if zoom_factor != 1:
-                    prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe.device)
+                    prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe_img2img.device)
                     prev_diffusion_output = zoom_image_torch(prev_diffusion_output, zoom_factor)
                     prev_diffusion_output = prev_diffusion_output.cpu().numpy()
                 image_init = image_init.astype(np.float32) * (1-alpha_acid) + alpha_acid*prev_diffusion_output.astype(np.float32)
@@ -543,7 +593,9 @@ while True:
             kwargs['guidance_scale'] = 0.5
             kwargs['noise_img2img'] = noise_img2img
             
-        img_mix = pb.pipe(**kwargs).images[0]     
+            img_mix = pipe_img2img(**kwargs).images[0]
+        else:
+            img_mix = pipe_text2img(**kwargs).images[0]
             
 
         # save the previous diffusion output
@@ -554,7 +606,7 @@ while True:
             
         do_debug_verlay = meta_input.get(akai_lpd8="A0", akai_midimix="H3", button_mode="toggle")
         if do_debug_verlay:
-            secondary_renderer.render(cam_img)
+            secondary_renderer.render(drive_img)
         else:
             secondary_renderer.render(img_mix)
         
