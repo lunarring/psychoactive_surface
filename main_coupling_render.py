@@ -31,7 +31,7 @@ import cv2
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 #%% VARS
-use_compiled_model = False
+use_compiled_model = True
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -43,7 +43,7 @@ nmb_rows, nmb_cols = (6,6)       # number of tiles
 ip_address_osc_receiver = '192.168.50.130'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
-
+use_cam = True
 
 
 
@@ -67,6 +67,7 @@ class MovieReaderCustom():
         self.shape_is_set = False        
 
     def get_next_frame(self, speed=2):
+        success = False
         for it in range(speed):
             success, image = self.video_player_object.read()
             
@@ -78,7 +79,7 @@ class MovieReaderCustom():
         else:
             print('MovieReaderCustom: move cycle finished, resetting to first frame')
             self.video_player_object.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            return np.zeros(self.shape)
+            return np.random.randint(0,20,self.shape).astype(np.uint8)
 
 # This should live somewhere else
 def zoom_image_torch(input_tensor, zoom_factor):
@@ -375,6 +376,7 @@ pb.h = height_latents
 latents = pb.get_latents()
 secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, backend='opencv')
 
+
 prompt_holder = PromptHolder(pb, size_img_tiles_hw)
 
 
@@ -383,9 +385,10 @@ gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, size_img_tiles_hw)
 
 list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
 gridrenderer.update(list_imgs)
-    
-cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
-cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+   
+if use_cam: 
+    cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
+    cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
 receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8004)
 if show_osc_visualization:
@@ -399,7 +402,9 @@ reference_time = time.time()
 
 dn_movie = 'psurf_vids'        
 list_fp_movies = ['bangbang_dance_interp_mflow','blue_dancer_interp_mflow',
-                  'multiskeleton_dance_interp_mflow','skeleton_dance_interp_mflow']
+                  'multiskeleton_dance_interp_mflow','skeleton_dance_interp_mflow',
+                  'betta_fish', 'complex_ink', 'lava_lamp', 'liquid1_slow',
+                  'liquid12_cropped_slow','neon_dancer']
 
 fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
 movie_reader = MovieReaderCustom(fp_movie)
@@ -453,9 +458,9 @@ t_last = time.time()
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 
 # av_router.map_av('SUB', 'b0_samp')
-av_router.map_av('DJMID', 'acid')
+av_router.map_av('DJMID', 'diffusion_noise')
 # av_router.map_av('SUB', 'd*_emb')
-av_router.map_av('DJLOW', 'diffusion_noise')
+av_router.map_av('DJLOW', 'acid')
 # av_router.map_av('SUB', 'fract_decoder_emb')
 av_router.map_av('DJHIGH', 'hue_rot')
 
@@ -490,10 +495,10 @@ while True:
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
         # modulate osc with akai
-        low_acid = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=0.1, val_default=0)
+        low_acid = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
         av_router.sound_features['DJLOW'] *= low_acid
         
-        mid_noise = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=1, val_default=0)
+        mid_noise = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=0.03, val_default=0)
         av_router.sound_features['DJMID'] *= mid_noise
         
         high_hue_rot = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
@@ -509,12 +514,9 @@ while True:
         # acid_fields = amp_mod[:,:,0][None][None], resample_grid
         # modulations['d2_acid'] = acid_fields
             
-        # fract_mod = meta_input.get(akai_midimix="G0", akai_lpd8="F0", val_default=0, val_max=2, val_min=0)
-        #fract_mod = av_router.sound_features[av_router.visual2sound['fract_decoder_emb']]
-        # fract_mod = meta_input.get(akai_midimix="G0", val_default=0, val_max=2, val_min=0)
-        
         fract_emb = meta_input.get(akai_midimix="B5", akai_lpd8="D0", val_min=0, val_max=1, val_default=0)
         if fract_emb > 0:
+            modulations['b0_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
             for i in range(3):
                 modulations[f'd{i}_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
         
@@ -553,11 +555,21 @@ while True:
             # image_init = image_init_input.copy()
             # image_init_input = np.roll(image_init_input, 2,axis=0)
             
+            do_new_movie = meta_input.get(akai_midimix="F3", akai_lpd8="A0", button_mode="released_once")
+            if do_new_movie:
+                fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
+                print(f'switching movie to {fp_movie}')
+                movie_reader.load_movie(fp_movie)
+            
             use_capture_dev = meta_input.get(akai_midimix="G4", button_mode="toggle")
             if use_capture_dev:
                 drive_img = cam.get_img()
             else:
-                drive_img = movie_reader.get_next_frame(speed=4)
+                speed_movie = meta_input.get(akai_lpd8="E0", akai_midimix="C5", val_min=1, val_max=16, val_default=1)
+                # speed_movie += int(av_router.get_modulation('acid'))
+                # print(f'speedmovie {speed_movie} {av_router.get_modulation("acid")}')
+                
+                drive_img = movie_reader.get_next_frame(speed=int(speed_movie))
                 drive_img = np.flip(drive_img, axis=2)
             
             hue_rot_angle = meta_input.get(akai_lpd8="E0", akai_midimix="B2", val_min=0.0, val_max=255, val_default=0)
@@ -569,7 +581,11 @@ while True:
             cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
             cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255
             
-            image_init = image_init.astype(np.float32) + cam_noise_coef*noise_cam
+            image_init = image_init.astype(np.float32)
+            image_inlay_gain = meta_input.get(akai_lpd8="E0", akai_midimix="G0", val_min=0.0, val_max=1, val_default=0)
+            image_init *= image_inlay_gain
+            
+            image_init = image_init + cam_noise_coef*noise_cam
             image_init = np.clip(image_init, 0, 255)
             image_init = image_init.astype(np.uint8)
             
@@ -602,10 +618,10 @@ while True:
         img_mix = np.array(img_mix)
         prev_diffusion_output = img_mix.astype(np.float32)
         
-        img_mix = rotate_hue(img_mix, av_router.get_modulation('hue_rot'))
+        img_mix = rotate_hue(img_mix, int(av_router.get_modulation('hue_rot')))
             
         do_debug_verlay = meta_input.get(akai_lpd8="A0", akai_midimix="H3", button_mode="toggle")
-        if do_debug_verlay:
+        if do_debug_verlay and use_image2image:
             secondary_renderer.render(drive_img)
         else:
             secondary_renderer.render(img_mix)

@@ -52,7 +52,7 @@ else:
     all_embeddings = np.load(fn_embeddings)
     
 #%%# filter the prompts
-prompt_filter = 'deep space theme'
+prompt_filter = 'WAVES'
 
 print(f'filtering the prompts with filter: {prompt_filter}...')
 filter_embeddings = embedding_model.encode([prompt_filter])
@@ -128,6 +128,11 @@ class PageGenerator:
         self.is_running = True
         self.start_time = datetime.now()
         self._start_precompute_thread()
+        self.prompt_filter = ""
+        
+    def set_prompt_filter(self, prompt_filter):
+        self.prompt_filter = prompt_filter.replace(" ", "_")
+        
 
     def _precompute_images(self):
         while self.is_running:
@@ -140,7 +145,7 @@ class PageGenerator:
             else:
                 # Remove oldest precomputed images and prompts to maintain list size
                 self.list_precomputed = self.list_precomputed[-self.nmb_max_precompute:]
-                self.prompts_precomputed = self.prompts_precomputed[-self.nmb_max_precompute:]
+                self.prompts_precomputed = self.prompts_sdfdfsprecomputed[-self.nmb_max_precompute:]
             time.sleep(0.01)  # Small delay to prevent hogging CPU resources
 
     def _start_precompute_thread(self):
@@ -164,7 +169,7 @@ class PageGenerator:
 
     def save_selected_prompt(self, index):
         if index < len(self.selected_prompts):
-            filename = "good_prompts_" + self.start_time.strftime("%y%m%d_%H%M") + ".txt"
+            filename = "prompt_" + self.prompt_filter + self.start_time.strftime("%y%m%d_%H%M") + ".txt"
             with open(filename, "a") as file:
                 file.write(self.selected_prompts[index] + "\n")
 
@@ -188,6 +193,7 @@ class PageGenerator:
 
 # Assuming other necessary components (list_filtered_prompts, pipe, gridrenderer, etc.) are defined elsewhere in the script.
 pg = PageGenerator(list_filtered_prompts, pipe, gridrenderer, nmb_images, width_diffusion, height_diffusion, width_show, height_show, num_inference_steps)
+pg.set_prompt_filter(prompt_filter)
 print("pre wait...")
 time.sleep(5)
 pg.next_page()

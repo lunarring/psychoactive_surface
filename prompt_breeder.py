@@ -19,9 +19,7 @@ torch.backends.cudnn.benchmark = False
 import json
 import lunar_tools as lt
 from datetime import datetime
-
 import argparse
-
 
 
 class GradioHolder():
