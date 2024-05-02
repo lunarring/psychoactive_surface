@@ -31,7 +31,7 @@ import cv2
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 #%% VARS
-use_compiled_model = True
+use_compiled_model = False
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -165,6 +165,48 @@ def rotate_hue(image, angle):
     rotated_image = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
     
     return rotated_image
+
+class NoodleMachine():
+    
+    def __init__(self):
+        self.causes= {}
+        self.effect2causes = {}
+        self.effect2functs = {}
+    
+    def create_noodle(self, cause_names, effect_name, func=np.prod):
+        if type(cause_names) == str:
+            cause_names = [cause_names]
+        assert hasattr(cause_names, '__getitem__')
+        assert type(cause_names[0])==str
+        if effect_name in self.effect2causes.keys():
+            raise ValueError(f'effect {effect_name} already noodled!')
+        self.effect2causes[effect_name] = cause_names
+        self.effect2functs[effect_name] = func      
+        for cause_name in cause_names:
+            if cause_name not in self.causes.keys():
+                self.causes[cause_name] = None
+            
+    def set_cause(self, cause_name, cause_value, must_exist=False):
+        if cause_name in self.causes.keys():
+            self.causes[cause_name] = cause_value
+        elif must_exist:
+            raise ValueError(f'cause {cause_name} not known')
+
+    def get_effect(self, effect_name):
+        if effect_name not in self.effect2causes.keys():
+            raise ValueError(f'effect {effect_name} not known')
+        cause_names = self.effect2causes[effect_name]
+        cause_values = []
+        for cause_name in cause_names:
+            if cause_name not in self.causes.keys():
+                raise ValueError(f'cause {cause_name} not known')
+            elif self.causes[cause_name] is None:
+                raise ValueError(f'cause {cause_name} not set')
+            cause_values.append(self.causes[cause_name])
+        return self.effect2functs[effect_name](cause_values)
+                
+
+
 
 class AudioVisualRouter():
     def __init__(self, meta_input):
@@ -423,6 +465,7 @@ movie_reader = MovieReaderCustom(fp_movie)
 
 #%%#
 av_router = AudioVisualRouter(meta_input)
+noodle_machine = NoodleMachine()
 
 negative_prompt = "blurry, lowres, disfigured"
 space_prompt = prompt_holder.prompt_spaces[prompt_holder.active_space][0]
@@ -459,10 +502,13 @@ sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 
 # av_router.map_av('SUB', 'b0_samp')
 av_router.map_av('DJMID', 'diffusion_noise')
+noodle_machine.create_noodle('DJMDID', 'diffusion_noise')
 # av_router.map_av('SUB', 'd*_emb')
 av_router.map_av('DJLOW', 'acid')
+noodle_machine.create_noodle('DJLOW', 'acid')
 # av_router.map_av('SUB', 'fract_decoder_emb')
 av_router.map_av('DJHIGH', 'hue_rot')
+noodle_machine.create_noodle('DJHIGH', 'hue_rot')
 
 is_noise_trans = True
 
@@ -555,6 +601,7 @@ while True:
             # image_init = image_init_input.copy()
             # image_init_input = np.roll(image_init_input, 2,axis=0)
             
+            # import pdb; pdb.set_trace()
             do_new_movie = meta_input.get(akai_midimix="F3", akai_lpd8="A0", button_mode="released_once")
             if do_new_movie:
                 fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
