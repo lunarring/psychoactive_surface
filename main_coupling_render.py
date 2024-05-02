@@ -8,7 +8,7 @@ Created on Tue Mar  5 15:26:28 2024
 
 import sys
 sys.path.append('../')
-
+sys.path.append("../garden4")
 import numpy as np
 import lunar_tools as lt
 import random
@@ -30,6 +30,7 @@ import os
 import cv2
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+from image_processing import multi_match_gpu
 #%% VARS
 use_compiled_model = False
 res_fact = 1.5
@@ -38,14 +39,14 @@ height_latents = int(64*res_fact)
 width_renderer = int(1024*2)
 height_renderer = 512*2
 
-size_img_tiles_hw = (150, 300)   # tile image size
-nmb_rows, nmb_cols = (6,6)       # number of tiles
+size_img_tiles_hw = (120, 260)   # tile image size
+nmb_rows, nmb_cols = (7,7)       # number of tiles
 ip_address_osc_receiver = '192.168.50.130'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
-use_cam = True
+use_cam = False
 
-
+# key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
 
 #%% aux func
 
@@ -429,7 +430,7 @@ list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*n
 gridrenderer.update(list_imgs)
    
 if use_cam: 
-    cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
+    cam = lt.WebCam(cam_id=1, shape_hw=shape_cam)
     cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
 receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8004)
@@ -541,13 +542,13 @@ while True:
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
         # modulate osc with akai
-        low_acid = meta_input.get(akai_midimix="H0", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
+        low_acid = meta_input.get(akai_midimix="H2", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
         av_router.sound_features['DJLOW'] *= low_acid
         
         mid_noise = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=0.03, val_default=0)
         av_router.sound_features['DJMID'] *= mid_noise
         
-        high_hue_rot = meta_input.get(akai_midimix="H2", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
+        high_hue_rot = meta_input.get(akai_midimix="H0", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
         av_router.sound_features['DJHIGH'] *= high_hue_rot
         
         # modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
@@ -593,6 +594,19 @@ while True:
         if len(cross_attention_kwargs) > 0:
             kwargs['cross_attention_kwargs'] = cross_attention_kwargs
             
+        # img2img controls
+        do_new_movie = meta_input.get(akai_midimix="F3", akai_lpd8="A0", button_mode="released_once")
+        use_capture_dev = meta_input.get(akai_midimix="G4", button_mode="toggle")
+        do_color_matching = meta_input.get(akai_midimix="F4", button_mode="toggle")
+        speed_movie = meta_input.get(akai_lpd8="E0", akai_midimix="C5", val_min=1, val_max=16, val_default=1)
+        hue_rot_angle = meta_input.get(akai_lpd8="E0", akai_midimix="G0", val_min=0.0, val_max=255, val_default=0)
+        cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
+        image_inlay_gain = meta_input.get(akai_lpd8="E0", akai_midimix="F0", val_min=0.0, val_max=1, val_default=0)
+        alpha_acid = meta_input.get(akai_lpd8="E0", akai_midimix="G2", val_min=0.0, val_max=1, val_default=0)
+        color_matching = meta_input.get(akai_lpd8="E0", akai_midimix="F2", val_min=0.0, val_max=1., val_default=0)
+        zoom_factor = meta_input.get(akai_lpd8="E0", akai_midimix="F1", val_min=0.8, val_max=1.2, val_default=1)
+        do_debug_verlay = meta_input.get(akai_lpd8="A0", akai_midimix="H3", button_mode="toggle")
+        
         if use_image2image:
             # success, image_init = vidcap.read()
             # image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
@@ -601,54 +615,55 @@ while True:
             # image_init = image_init_input.copy()
             # image_init_input = np.roll(image_init_input, 2,axis=0)
             
-            # import pdb; pdb.set_trace()
-            do_new_movie = meta_input.get(akai_midimix="F3", akai_lpd8="A0", button_mode="released_once")
             if do_new_movie:
                 fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
                 print(f'switching movie to {fp_movie}')
                 movie_reader.load_movie(fp_movie)
             
-            use_capture_dev = meta_input.get(akai_midimix="G4", button_mode="toggle")
             if use_capture_dev:
-                drive_img = cam.get_img()
+                try:
+                    drive_img = cam.get_img()
+                except Exception as e:
+                    print("capture card fail!")
             else:
-                speed_movie = meta_input.get(akai_lpd8="E0", akai_midimix="C5", val_min=1, val_max=16, val_default=1)
                 # speed_movie += int(av_router.get_modulation('acid'))
                 # print(f'speedmovie {speed_movie} {av_router.get_modulation("acid")}')
                 
                 drive_img = movie_reader.get_next_frame(speed=int(speed_movie))
                 drive_img = np.flip(drive_img, axis=2)
             
-            hue_rot_angle = meta_input.get(akai_lpd8="E0", akai_midimix="B2", val_min=0.0, val_max=255, val_default=0)
             if hue_rot_angle > 0:
                 drive_img = rotate_hue(drive_img, int(hue_rot_angle))
 
             image_init = cv2.resize(drive_img, (pb.w*8, pb.h*8))
             
-            cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
             cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255
             
             image_init = image_init.astype(np.float32)
-            image_inlay_gain = meta_input.get(akai_lpd8="E0", akai_midimix="G0", val_min=0.0, val_max=1, val_default=0)
             image_init *= image_inlay_gain
             
             image_init = image_init + cam_noise_coef*noise_cam
             image_init = np.clip(image_init, 0, 255)
             image_init = image_init.astype(np.uint8)
             
-            alpha_acid = meta_input.get(akai_lpd8="E0", akai_midimix="G2", val_min=0.0, val_max=1, val_default=0)
             alpha_acid += av_router.get_modulation('acid') * 10
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
                 prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
-                zoom_factor = meta_input.get(akai_lpd8="E0", akai_midimix="E0", val_min=0.8, val_max=1.2, val_default=1)
                 if zoom_factor != 1:
                     prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe_img2img.device)
                     prev_diffusion_output = zoom_image_torch(prev_diffusion_output, zoom_factor)
                     prev_diffusion_output = prev_diffusion_output.cpu().numpy()
+                
                 image_init = image_init.astype(np.float32) * (1-alpha_acid) + alpha_acid*prev_diffusion_output.astype(np.float32)
                 image_init = image_init.astype(np.uint8)
+                
+                if do_color_matching:
+                    image_init_torch = torch.Tensor(image_init).cuda()
+                    prev_diffusion_output_torch = torch.Tensor(prev_diffusion_output).cuda()
+                    image_init_torch_matched, _ = multi_match_gpu([image_init_torch, prev_diffusion_output_torch], weights=[1-color_matching, color_matching], simple=False, clip_max=255, gpu=0,  is_input_tensor=True)
+                    image_init = image_init_torch_matched.cpu().numpy().astype(np.uint8)
             
             kwargs['image'] = Image.fromarray(image_init)
             kwargs['num_inference_steps'] = 2
@@ -667,7 +682,6 @@ while True:
         
         img_mix = rotate_hue(img_mix, int(av_router.get_modulation('hue_rot')))
             
-        do_debug_verlay = meta_input.get(akai_lpd8="A0", akai_midimix="H3", button_mode="toggle")
         if do_debug_verlay and use_image2image:
             secondary_renderer.render(drive_img)
         else:
