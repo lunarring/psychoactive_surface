@@ -503,13 +503,13 @@ sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 
 # av_router.map_av('SUB', 'b0_samp')
 av_router.map_av('DJMID', 'diffusion_noise')
-noodle_machine.create_noodle('DJMDID', 'diffusion_noise')
+noodle_machine.create_noodle(['DJMDID', 'H1'], 'diffusion_noise')
 # av_router.map_av('SUB', 'd*_emb')
 av_router.map_av('DJLOW', 'acid')
-noodle_machine.create_noodle('DJLOW', 'acid')
+noodle_machine.create_noodle(['DJLOW','H2','G2'], 'alpha_acid', lambda x: 10*(x[0]*x[1]+x[2]))
 # av_router.map_av('SUB', 'fract_decoder_emb')
 av_router.map_av('DJHIGH', 'hue_rot')
-noodle_machine.create_noodle('DJHIGH', 'hue_rot')
+noodle_machine.create_noodle(['DJHIGH','H0'], 'hue_rot')
 
 is_noise_trans = True
 
@@ -537,19 +537,23 @@ while True:
         show_osc_vals = meta_input.get(akai_midimix="C4", button_mode="toggle")
         for name in sound_feature_names:
             av_router.update_sound(f'{name}', receiver.get_last_value(f"/{name}"))
+            noodle_machine.set_cause(f'{name}', receiver.get_last_value(f"/{name}"))
             if show_osc_vals:
                 print(f'{name} {receiver.get_last_value(f"/{name}")}')
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
         # modulate osc with akai
-        low_acid = meta_input.get(akai_midimix="H2", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
-        av_router.sound_features['DJLOW'] *= low_acid
+        H2 = meta_input.get(akai_midimix="H2", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
+        av_router.sound_features['DJLOW'] *= H2
+        noodle_machine.set_cause('H2', H2)
         
-        mid_noise = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=0.03, val_default=0)
-        av_router.sound_features['DJMID'] *= mid_noise
+        H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=0.03, val_default=0)
+        av_router.sound_features['DJMID'] *= H1
+        noodle_machine.set_cause('H1', H1)
         
-        high_hue_rot = meta_input.get(akai_midimix="H0", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
-        av_router.sound_features['DJHIGH'] *= high_hue_rot
+        H0 = meta_input.get(akai_midimix="H0", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
+        av_router.sound_features['DJHIGH'] *= H0
+        noodle_machine.set_cause('H0', H0)
         
         # modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
         
@@ -603,6 +607,7 @@ while True:
         cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
         image_inlay_gain = meta_input.get(akai_lpd8="E0", akai_midimix="F0", val_min=0.0, val_max=1, val_default=0)
         alpha_acid = meta_input.get(akai_lpd8="E0", akai_midimix="G2", val_min=0.0, val_max=1, val_default=0)
+        noodle_machine.set_cause("G2", alpha_acid)
         color_matching = meta_input.get(akai_lpd8="E0", akai_midimix="F2", val_min=0.0, val_max=1., val_default=0)
         zoom_factor = meta_input.get(akai_lpd8="E0", akai_midimix="F1", val_min=0.8, val_max=1.2, val_default=1)
         do_debug_verlay = meta_input.get(akai_lpd8="A0", akai_midimix="H3", button_mode="toggle")
@@ -637,6 +642,7 @@ while True:
 
             image_init = cv2.resize(drive_img, (pb.w*8, pb.h*8))
             
+            # print(av_router.get_modulation('diffusion_noise'), noodle_machine.get_effect('diffusion_noise'))
             cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255
             
             image_init = image_init.astype(np.float32)
@@ -647,6 +653,9 @@ while True:
             image_init = image_init.astype(np.uint8)
             
             alpha_acid += av_router.get_modulation('acid') * 10
+            nm_alpha_acid = noodle_machine.get_effect('alpha_acid')
+
+            # print(alpha_acid, nm_alpha_acid)
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
@@ -681,7 +690,7 @@ while True:
         prev_diffusion_output = img_mix.astype(np.float32)
         
         img_mix = rotate_hue(img_mix, int(av_router.get_modulation('hue_rot')))
-            
+        
         if do_debug_verlay and use_image2image:
             secondary_renderer.render(drive_img)
         else:
