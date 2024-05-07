@@ -44,7 +44,7 @@ nmb_rows, nmb_cols = (7,7)       # number of tiles
 ip_address_osc_receiver = '192.168.50.130'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
-use_cam = False
+use_cam = True
 
 # key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
 
@@ -82,7 +82,7 @@ class MovieReaderCustom():
             self.video_player_object.set(cv2.CAP_PROP_POS_FRAMES, 0)
             return np.random.randint(0,20,self.shape).astype(np.uint8)
 
-# This should live somewhere else
+#%% Image processing functions. These should live somewhere else
 def zoom_image_torch(input_tensor, zoom_factor):
     # Ensure the input is a 4D tensor [batch_size, channels, height, width]
     if len(input_tensor.shape) == 3:
@@ -127,21 +127,72 @@ def zoom_image_torch(input_tensor, zoom_factor):
         zoomed_tensor = zoomed_tensor.permute(1,2,0)  
     return zoomed_tensor
 
-
-def get_sample_shape_unet(coord):
-    if coord[0] == 'e':
-        coef = float(2**int(coord[1]))
-        shape = [int(np.ceil(height_latents/coef)), int(np.ceil(width_latents/coef))]
-    elif coord[0] == 'b':
-        shape = [int(np.ceil(height_latents/4)), int(np.ceil(width_latents/4))]
+def multi_match_gpu(list_images, weights=None, simple=False, clip_max='auto', gpu=0,  is_input_tensor=False):
+    """
+    Match colors of images according to weights.
+    """
+    from scipy import linalg
+    if is_input_tensor:
+        list_images_gpu = [img.clone() for img in list_images]
     else:
-        coef = float(2**(2-int(coord[1])))
-        shape = [int(np.ceil(height_latents/coef)), int(np.ceil(width_latents/coef))]
+        list_images_gpu = [torch.from_numpy(img.copy()).float().cuda(gpu) for img in list_images]
+    
+    if clip_max == 'auto':
+        clip_max = 255 if list_images[0].max() > 16 else 1  
+    
+    if weights is None:
+        weights = [1]*len(list_images_gpu)
+    weights = np.array(weights, dtype=np.float32)/sum(weights) 
+    assert len(weights) == len(list_images_gpu)
+    # try:
+    assert simple == False    
+    def cov_colors(img):
+        a, b, c = img.size()
+        img_reshaped = img.view(a*b,c)
+        mu = torch.mean(img_reshaped, 0, keepdim=True)
+        img_reshaped -= mu
+        cov = torch.mm(img_reshaped.t(), img_reshaped) / img_reshaped.shape[0]
+        return cov, mu
+    
+    covs = np.zeros((len(list_images_gpu),3,3), dtype=np.float32)
+    mus = torch.zeros((len(list_images_gpu),3)).float().cuda(gpu)
+    mu_target = torch.zeros((1,1,3)).float().cuda(gpu)
+    #cov_target = np.zeros((3,3), dtype=np.float32)
+    for i, img in enumerate(list_images_gpu):
+        cov, mu = cov_colors(img)
+        mus[i,:] = mu
+        covs[i,:,:]= cov.cpu().numpy()
+        mu_target += mu * weights[i]
+            
+    cov_target = np.sum(weights.reshape(-1,1,1)*covs, 0)
+    covs += np.eye(3, dtype=np.float32)*1
+    
+    # inversion_fail = False
+    try:
+        sqrtK = linalg.sqrtm(cov_target)
+        assert np.isnan(sqrtK.mean()) == False
+    except Exception as e:
+        print(e)
+        # inversion_fail = True
+        sqrtK = linalg.sqrtm(cov_target + np.random.rand(3,3)*0.01)
+    list_images_new = []
+    for i, img in enumerate(list_images_gpu):
         
-    return shape
+        Ms = np.real(np.matmul(sqrtK, linalg.inv(linalg.sqrtm(covs[i]))))
+        Ms = torch.from_numpy(Ms).float().cuda(gpu)
+        #img_new = img - mus[i]
+        img_new = torch.mm(img.view([img.shape[0]*img.shape[1],3]), Ms.t())
+        img_new = img_new.view([img.shape[0],img.shape[1],3]) + mu_target
+        
+        img_new = torch.clamp(img_new, 0, clip_max)
 
-def get_noise_for_modulations(shape):
-    return torch.randn(shape, device=pipe_text2img.device, generator=torch.Generator(device=pipe_text2img.device).manual_seed(1)).half()
+        assert torch.isnan(img_new).max().item() == False
+        if is_input_tensor:
+            list_images_new.append(img_new)
+        else:
+            list_images_new.append(img_new.cpu().numpy())
+    return list_images_new
+
 
 def rotate_hue(image, angle):
     """
@@ -166,6 +217,24 @@ def rotate_hue(image, angle):
     rotated_image = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
     
     return rotated_image
+
+#%%
+
+def get_sample_shape_unet(coord):
+    if coord[0] == 'e':
+        coef = float(2**int(coord[1]))
+        shape = [int(np.ceil(height_latents/coef)), int(np.ceil(width_latents/coef))]
+    elif coord[0] == 'b':
+        shape = [int(np.ceil(height_latents/4)), int(np.ceil(width_latents/4))]
+    else:
+        coef = float(2**(2-int(coord[1])))
+        shape = [int(np.ceil(height_latents/coef)), int(np.ceil(width_latents/coef))]
+        
+    return shape
+
+def get_noise_for_modulations(shape):
+    return torch.randn(shape, device=pipe_text2img.device, generator=torch.Generator(device=pipe_text2img.device).manual_seed(1)).half()
+
 
 class NoodleMachine():
     
@@ -375,7 +444,8 @@ class PromptHolder():
 
 
 #%% inits
-meta_input = lt.MetaInput()
+midi_input = lt.MidiInput(device_name="akai_midimix")
+
 
 pipe_img2img = AutoPipelineForImage2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
 pipe_text2img = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
@@ -410,8 +480,8 @@ if use_compiled_model:
     config.enable_cuda_graph = True
     pipe_img2img = compile(pipe_img2img, config)
 
-acidman = u_deepacid.AcidMan(0, meta_input, None)
-acidman.init('a01')
+# acidman = u_deepacid.AcidMan(0, meta_input, None)
+# acidman.init('a01')
 
 pb = PromptBlender(pipe_text2img)
 pb.w = width_latents
@@ -430,7 +500,7 @@ list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*n
 gridrenderer.update(list_imgs)
    
 if use_cam: 
-    cam = lt.WebCam(cam_id=1, shape_hw=shape_cam)
+    cam = lt.WebCam(cam_id=0, shape_hw=shape_cam)
     cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
 receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8004)
@@ -452,20 +522,9 @@ list_fp_movies = ['bangbang_dance_interp_mflow','blue_dancer_interp_mflow',
 fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
 movie_reader = MovieReaderCustom(fp_movie)
 
-# while True:
-#     drive_img = movie_reader.get_next_frame()
-#     secondary_renderer.render(drive_img)
-    
-#     time.sleep(0.06)
-
-
-# GFDGFDG
-    
-    
-
 
 #%%#
-av_router = AudioVisualRouter(meta_input)
+# av_router = AudioVisualRouter(meta_input)
 noodle_machine = NoodleMachine()
 
 negative_prompt = "blurry, lowres, disfigured"
@@ -489,7 +548,7 @@ modulations['modulations_noise'] = modulations_noise
 
 noise_cam = np.random.randn(pb.h*8, pb.w*8, 3).astype(np.float32)*100
 
-embeds_mod_full = pb.get_prompt_embeds("full of electric sparkles")
+embeds_mod_full = pb.get_prompt_embeds("dramatic")
 
 prev_diffusion_output = None
 prev_camera_output = None
@@ -502,14 +561,14 @@ t_last = time.time()
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 
 # av_router.map_av('SUB', 'b0_samp')
-av_router.map_av('DJMID', 'diffusion_noise')
-noodle_machine.create_noodle(['DJMDID', 'H1'], 'diffusion_noise')
+# av_router.map_av('DJMID', 'diffusion_noise')
 # av_router.map_av('SUB', 'd*_emb')
-av_router.map_av('DJLOW', 'acid')
-noodle_machine.create_noodle(['DJLOW','H2','G2'], 'alpha_acid', lambda x: 10*(x[0]*x[1]+x[2]))
+# av_router.map_av('DJLOW', 'acid')
 # av_router.map_av('SUB', 'fract_decoder_emb')
-av_router.map_av('DJHIGH', 'hue_rot')
-noodle_machine.create_noodle(['DJHIGH','H0'], 'hue_rot')
+# av_router.map_av('DJHIGH', 'hue_rot')
+noodle_machine.create_noodle(['DJMID', 'H1', 'G1'], 'diffusion_noise', lambda x: 255*x[0]*x[1]+x[2])
+noodle_machine.create_noodle(['DJLOW','H2','G2'], 'alpha_acid', lambda x: 10*x[0]*x[1]+x[2])
+noodle_machine.create_noodle(['DJHIGH','H0'], 'hue_rot_mix', lambda x: 100*x[0]*x[1])
 
 is_noise_trans = True
 
@@ -527,33 +586,45 @@ while True:
     while fract < 1:
         dt = time.time() - t_last
         t_last = time.time()
-        show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
-        if show_osc_visualization:
-            receiver.show_visualization()
+        # show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
+        # if show_osc_visualization:
+        #     receiver.show_visualization()
             
-        use_image2image = meta_input.get(akai_midimix="G3", button_mode="toggle")
+        use_image2image = midi_input.get("G3", button_mode="toggle")
         
         # update oscs
-        show_osc_vals = meta_input.get(akai_midimix="C4", button_mode="toggle")
+        show_osc_vals = midi_input.get("C4", button_mode="toggle")
         for name in sound_feature_names:
-            av_router.update_sound(f'{name}', receiver.get_last_value(f"/{name}"))
+            # av_router.update_sound(f'{name}', receiver.get_last_value(f"/{name}"))
             noodle_machine.set_cause(f'{name}', receiver.get_last_value(f"/{name}"))
             if show_osc_vals:
                 print(f'{name} {receiver.get_last_value(f"/{name}")}')
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
+        # update midi
+        allowed_midi_rows = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        allowed_midi_cols = ["0", "1", "2", "5"]
+        for cause in list(noodle_machine.causes.keys()):
+            if len(cause) == 2 and cause[0] in allowed_midi_rows and cause[1] in allowed_midi_cols:
+                for x in noodle_machine.effect2causes:
+                    if cause in noodle_machine.effect2causes[x]:
+                        effect_name = x
+                noodle_mod = midi_input.get(cause, val_min=0, val_max=1, val_default=0, variable_name=f"NM {effect_name}")
+                noodle_machine.set_cause(cause, noodle_mod)
+                
+        
         # modulate osc with akai
-        H2 = meta_input.get(akai_midimix="H2", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
-        av_router.sound_features['DJLOW'] *= H2
-        noodle_machine.set_cause('H2', H2)
+        # H2 = meta_input.get(akai_midimix="H2", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
+        # av_router.sound_features['DJLOW'] *= H2
+        # # noodle_machine.set_cause('H2', H2)
         
-        H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=0.03, val_default=0)
-        av_router.sound_features['DJMID'] *= H1
-        noodle_machine.set_cause('H1', H1)
+        # H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=0.03, val_default=0)
+        # av_router.sound_features['DJMID'] *= H1
+        # noodle_machine.set_cause('H1', H1)
         
-        H0 = meta_input.get(akai_midimix="H0", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
-        av_router.sound_features['DJHIGH'] *= H0
-        noodle_machine.set_cause('H0', H0)
+        # H0 = meta_input.get(akai_midimix="H0", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
+        # av_router.sound_features['DJHIGH'] *= H0
+        # noodle_machine.set_cause('H0', H0)
         
         # modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
         
@@ -565,20 +636,20 @@ while True:
         # acid_fields = amp_mod[:,:,0][None][None], resample_grid
         # modulations['d2_acid'] = acid_fields
             
-        fract_emb = meta_input.get(akai_midimix="B5", akai_lpd8="D0", val_min=0, val_max=1, val_default=0)
+        fract_emb = midi_input.get("B5", val_min=0, val_max=1, val_default=0)
         if fract_emb > 0:
             modulations['b0_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
             for i in range(3):
                 modulations[f'd{i}_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
         
-        fract_decoder_emb = meta_input.get(akai_midimix="A5", akai_lpd8="D0", val_min=0, val_max=10, val_default=0)
+        fract_decoder_emb = midi_input.get("A5", val_min=0, val_max=1, val_default=0)
         if fract_decoder_emb > 0:
             embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, fract_decoder_emb)
             modulations['d0_extra_embeds'] = embeds_mod[0]
         
         # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-        d_fract_noise = meta_input.get(akai_lpd8="E0", akai_midimix="A0", val_min=0.0, val_max=0.02, val_default=0)
-        d_fract_embed = meta_input.get(akai_lpd8="E1", akai_midimix="A1", val_min=0.0, val_max=0.02, val_default=0)
+        d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.02, val_default=0)
+        d_fract_embed = midi_input.get("A1", val_min=0.0, val_max=0.02, val_default=0)
         
         cross_attention_kwargs ={}
         cross_attention_kwargs['modulations'] = modulations        
@@ -599,18 +670,26 @@ while True:
             kwargs['cross_attention_kwargs'] = cross_attention_kwargs
             
         # img2img controls
-        do_new_movie = meta_input.get(akai_midimix="F3", akai_lpd8="A0", button_mode="released_once")
-        use_capture_dev = meta_input.get(akai_midimix="G4", button_mode="toggle")
-        do_color_matching = meta_input.get(akai_midimix="F4", button_mode="toggle")
-        speed_movie = meta_input.get(akai_lpd8="E0", akai_midimix="C5", val_min=1, val_max=16, val_default=1)
-        hue_rot_angle = meta_input.get(akai_lpd8="E0", akai_midimix="G0", val_min=0.0, val_max=255, val_default=0)
-        cam_noise_coef = meta_input.get(akai_lpd8="E0", akai_midimix="G1", val_min=0.0, val_max=1, val_default=0)
-        image_inlay_gain = meta_input.get(akai_lpd8="E0", akai_midimix="F0", val_min=0.0, val_max=1, val_default=0)
-        alpha_acid = meta_input.get(akai_lpd8="E0", akai_midimix="G2", val_min=0.0, val_max=1, val_default=0)
-        noodle_machine.set_cause("G2", alpha_acid)
-        color_matching = meta_input.get(akai_lpd8="E0", akai_midimix="F2", val_min=0.0, val_max=1., val_default=0)
-        zoom_factor = meta_input.get(akai_lpd8="E0", akai_midimix="F1", val_min=0.8, val_max=1.2, val_default=1)
-        do_debug_verlay = meta_input.get(akai_lpd8="A0", akai_midimix="H3", button_mode="toggle")
+        do_new_movie = midi_input.get("F3", button_mode="released_once")
+        use_capture_dev = midi_input.get("G4", button_mode="toggle")
+        # use_cam = midi_input.get("H4", button_mode="toggle")
+        # if use_cam:
+        #     try:
+        #         cam = cam
+        #     except:
+        #         cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
+        #         cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+                
+        do_color_matching = midi_input.get("F4", button_mode="toggle")
+        speed_movie = midi_input.get("C5", val_min=1, val_max=16, val_default=1)
+        hue_rot_drive = int(midi_input.get("G0", val_min=0.0, val_max=255, val_default=0))
+        # cam_noise_coef = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
+        image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0)
+        # alpha_acid = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
+        # noodle_machine.set_cause("G2", alpha_acid)
+        color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
+        zoom_factor = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=1)
+        do_debug_verlay = midi_input.get("H3", button_mode="toggle")
         
         if use_image2image:
             # success, image_init = vidcap.read()
@@ -627,35 +706,37 @@ while True:
             
             if use_capture_dev:
                 try:
-                    drive_img = cam.get_img()
+                    img_drive = cam.get_img()
                 except Exception as e:
                     print("capture card fail!")
             else:
                 # speed_movie += int(av_router.get_modulation('acid'))
                 # print(f'speedmovie {speed_movie} {av_router.get_modulation("acid")}')
                 
-                drive_img = movie_reader.get_next_frame(speed=int(speed_movie))
-                drive_img = np.flip(drive_img, axis=2)
+                img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
+                img_drive = np.flip(img_drive, axis=2)
             
-            if hue_rot_angle > 0:
-                drive_img = rotate_hue(drive_img, int(hue_rot_angle))
+            if hue_rot_drive > 0:
+                img_drive = rotate_hue(img_drive, hue_rot_drive)
 
-            image_init = cv2.resize(drive_img, (pb.w*8, pb.h*8))
+            image_init = cv2.resize(img_drive, (pb.w*8, pb.h*8))
             
             # print(av_router.get_modulation('diffusion_noise'), noodle_machine.get_effect('diffusion_noise'))
-            cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255
+            # cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255 XXX
+            diffusion_noise = noodle_machine.get_effect('diffusion_noise')
             
             image_init = image_init.astype(np.float32)
             image_init *= image_inlay_gain
             
-            image_init = image_init + cam_noise_coef*noise_cam
+            # image_init = image_init + cam_noise_coef*noise_cam
+            image_init = image_init + diffusion_noise*noise_cam
             image_init = np.clip(image_init, 0, 255)
             image_init = image_init.astype(np.uint8)
             
-            alpha_acid += av_router.get_modulation('acid') * 10
-            nm_alpha_acid = noodle_machine.get_effect('alpha_acid')
+            # alpha_acid += av_router.get_modulation('acid') * 10 XXX
+            alpha_acid = noodle_machine.get_effect('alpha_acid')
 
-            # print(alpha_acid, nm_alpha_acid)
+            # print(f'alpha acid :{alpha_acid}, {nm_alpha_acid}')
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
@@ -689,10 +770,12 @@ while True:
         img_mix = np.array(img_mix)
         prev_diffusion_output = img_mix.astype(np.float32)
         
-        img_mix = rotate_hue(img_mix, int(av_router.get_modulation('hue_rot')))
+        hue_rot_mix = noodle_machine.get_effect('hue_rot_mix')
+        img_mix = rotate_hue(img_mix, hue_rot_mix) # XXX
+        # img_mix = rotate_hue(img_mix, int(av_router.get_modulation('hue_rot'))) # XXX
         
         if do_debug_verlay and use_image2image:
-            secondary_renderer.render(drive_img)
+            secondary_renderer.render(img_drive)
         else:
             secondary_renderer.render(img_mix)
         
@@ -738,21 +821,21 @@ while True:
                 print(f"fail of click event! {e}")
         else:
             # regular movement
-            # fract_osc = 0
-            fract_osc = av_router.get_modulation('diffusion_noise')
+            fract_osc = 0
+            # fract_osc = av_router.get_modulation('diffusion_noise') # XXX
             if is_noise_trans:
                 fract += d_fract_noise + fract_osc
             else:
                 fract += d_fract_embed + fract_osc
                 
-        do_new_space = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="released_once")
+        do_new_space = midi_input.get("A3", button_mode="released_once")
         if do_new_space:     
             prompt_holder.set_next_space()
             list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
             gridrenderer.update(list_imgs)
             
-        do_auto_change = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="toggle")
-        t_auto_change = meta_input.get(akai_midimix="A2", val_min=1, val_max=10)
+        do_auto_change = midi_input.get("A4", button_mode="toggle")
+        t_auto_change = midi_input.get("A2", val_min=1, val_max=10)
         
         if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
             # go to random img
@@ -764,7 +847,7 @@ while True:
             t_prompt_injected = time.time()
             print(f"auto change to: {space_prompt}")
         
-        # do_new_prompts = meta_input.get(akai_midimix="A4", akai_lpd8="A1", button_mode="pressed_once")
+        # do_new_prompts = midi_input.get("A4", akai_lpd8="A1", button_mode="pressed_once")
         # if do_new_prompts:
         #     list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
         #     gridrenderer.update(list_imgs)
