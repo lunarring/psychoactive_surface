@@ -33,7 +33,7 @@ import torch.nn.functional as F
 from image_processing import multi_match_gpu
 #%% VARS
 use_compiled_model = False
-res_fact = 1.1
+res_fact = 1.0
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
 width_renderer = int(1024*2)
@@ -611,41 +611,6 @@ while True:
                 print(f'{name} {receiver.get_last_value(f"/{name}")}')
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
-        # # update midi
-        # allowed_midi_rows = ["A", "B", "C", "D", "E", "F", "G", "H"]
-        # allowed_midi_cols = ["0", "1", "2", "5"]
-        # for cause in list(noodle_machine.causes.keys()):
-        #     if len(cause) == 2 and cause[0] in allowed_midi_rows and cause[1] in allowed_midi_cols:
-        #         for x in noodle_machine.effect2causes:
-        #             if cause in noodle_machine.effect2causes[x]:
-        #                 effect_name = x
-        #         noodle_mod = midi_input.get(cause, val_min=0, val_max=1, val_default=0, variable_name=f"NM {effect_name}")
-        #         noodle_machine.set_cause(cause, noodle_mod)
-                
-        
-        # modulate osc with akai
-        # H2 = meta_input.get(akai_midimix="H2", akai_lpd8="G0", val_min=0, val_max=1, val_default=0)
-        # av_router.sound_features['DJLOW'] *= H2
-        # # noodle_machine.set_cause('H2', H2)
-        
-        # H1 = meta_input.get(akai_midimix="H1", akai_lpd8="G1",val_min=0, val_max=0.03, val_default=0)
-        # av_router.sound_features['DJMID'] *= H1
-        # noodle_machine.set_cause('H1', H1)
-        
-        # H0 = meta_input.get(akai_midimix="H0", akai_lpd8="H0", val_min=0, val_max=100, val_default=0)
-        # av_router.sound_features['DJHIGH'] *= H0
-        # noodle_machine.set_cause('H0', H0)
-        
-        # modulations['d2_samp'] = torch.tensor(av_router.get_modulation('d2_samp'), device=latents1.device)
-        
-        # the line below (resample_grid...) causes memory leak
-        # amp = 1e-1
-        # resample_grid = acidman.do_acid(modulations_noise['d2'][None].float().permute([1,2,0]), amp)
-        # amp_mod = (resample_grid - acidman.identity_resample_grid)     
-      
-        # acid_fields = amp_mod[:,:,0][None][None], resample_grid
-        # modulations['d2_acid'] = acid_fields
-            
         fract_emb = midi_input.get("B5", val_min=0, val_max=1, val_default=0)
         if fract_emb > 0:
             modulations['b0_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
@@ -668,8 +633,7 @@ while True:
         pb.blend_stored_embeddings(fract)
         
         kwargs = {}
-        kwargs['guidance_scale'] = 0
-        kwargs['num_inference_steps'] = 2 #pb.num_inference_steps
+        kwargs['guidance_scale'] = 0.5
         kwargs['latents'] = latents_mix
         kwargs['prompt_embeds'] = pb.prompt_embeds
         kwargs['negative_prompt_embeds'] = pb.negative_prompt_embeds
@@ -696,12 +660,9 @@ while True:
         speed_movie = midi_input.get("C5", val_min=1, val_max=16, val_default=1)
         hue_rot_drive = int(midi_input.get("G0", val_min=0.0, val_max=255, val_default=0))
         
-        image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=1)
-        # alpha_acid = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
-        # noodle_machine.set_cause("G2", alpha_acid)
+        image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0.5)
         color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
         zoom_factor = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=1)
-        # zoom_factor = 0.75 + 0.5*xx 
         do_debug_verlay = midi_input.get("H3", button_mode="toggle")
         
         diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
@@ -713,14 +674,7 @@ while True:
         use_noise_drive = midi_input.get("B4", button_mode="toggle")
         
         if use_image2image:
-            
-            
-            # success, image_init = vidcap.read()
-            # image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
-            # image_init_input = render_moving_rotating_triangles(shape, triangles)
-            # plt.imshow(image_init_input); plt.show(); plt.ion()
-            # image_init = image_init_input.copy()
-            # image_init_input = np.roll(image_init_input, 2,axis=0)
+            kwargs['num_inference_steps'] = 2
             
             if do_new_movie:
                 fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
@@ -760,18 +714,13 @@ while True:
             image_init = image_init.astype(np.float32)
             image_init *= image_inlay_gain
             
-            # image_init = image_init + cam_noise_coef*noise_cam
             image_init = image_init + diffusion_noise*noise_cam
             image_init = np.clip(image_init, 0, 255)
             image_init = image_init.astype(np.uint8)
             
-            # alpha_acid += av_router.get_modulation('acid') * 10 XXX
             mem_acid_mod = noodle_machine.get_effect('mem_acid_mod')
-            # mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
-            # mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
             
             mem_acid = mem_acid_base + mem_acid_gain * mem_acid_mod
-            # print(f'alpha_acid: {alpha_acid}')
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
@@ -794,7 +743,9 @@ while True:
             
             img_mix = pipe_img2img(**kwargs).images[0]
         else:
+            kwargs['num_inference_steps'] = 1
             img_mix = pipe_text2img(**kwargs).images[0]
+            img_noise_drive = np.asarray(img_mix.copy())
             
 
         # save the previous diffusion output
@@ -806,8 +757,7 @@ while True:
         
         hue_rot = 100 * hue_rot_gain * hue_rot_mod
         
-        img_mix = rotate_hue(img_mix, hue_rot) # XXX
-        # img_mix = rotate_hue(img_mix, int(av_router.get_modulation('hue_rot'))) # XXX
+        # img_mix = rotate_hue(img_mix, hue_rot)
         
         if do_debug_verlay and use_image2image:
             secondary_renderer.render(img_drive)
@@ -848,9 +798,6 @@ while True:
                     list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
                     gridrenderer.update(list_imgs)
                     prompt_holder.show_all_spaces = False
-                    
-                    
-                    
                     
             except Exception as e:
                 print(f"fail of click event! {e}")
@@ -896,52 +843,6 @@ while True:
 
 
 
-            
-    
-"""
-CEMENTARY
-
-        # EXPERIMENTAL WHISPER
-        # do_record_mic = meta_input.get(akai_midimix="A3", akai_lpd8="A0", button_mode="held_down")
-        # do_record_mic = akai_lpd8.get('s', button_mode='pressed_once')
-        
-        # try:
-        #     if do_record_mic:
-        #         if not speech_detector.audio_recorder.is_recording:
-        #             speech_detector.start_recording()
-        #     elif not do_record_mic:
-        #         if speech_detector.audio_recorder.is_recording:
-        #             prompt = speech_detector.stop_recording()
-        #             print(f"New prompt: {prompt}")
-        #             if prompt is not None:
-        #                 embeds_mod_full = pb.get_prompt_embeds(prompt)
-        #             stop_recording = False
-        # except Exception as e:
-        #     print(f"FAIL {e}")
-        
-
-    
-# if not use_compiled_model or True:
-#     def noise_mod_func(sample):
-#         noise =  torch.randn(sample.shape, device=sample.device, generator=torch.Generator(device=sample.device).manual_seed(1))
-#         return noise    
-    
-#     def acid_func(sample):
-#         amp = 1e-1
-#         resample_grid = acidman.do_acid(sample[0].float().permute([1,2,0]), amp)
-#         amp_mod = (resample_grid - acidman.identity_resample_grid)     
-#         return amp_mod[:,:,0][None][None], resample_grid
-#     modulations['noise_mod_func'] = noise_mod_func
-#     modulations['d*_extra_embeds'] = pb.get_prompt_embeds("full of electric sparkles")[0]
-
-
-
-
-"""
-    
-    
-    
-    
     
     
     
