@@ -33,7 +33,7 @@ import torch.nn.functional as F
 from image_processing import multi_match_gpu
 #%% VARS
 use_compiled_model = False
-res_fact = 1.5
+res_fact = 1.1
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
 width_renderer = int(1024*2)
@@ -665,7 +665,7 @@ while True:
         cross_attention_kwargs['modulations'] = modulations        
         
         latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
-        pb.generate_blended_img(fract, latents_mix, cross_attention_kwargs=cross_attention_kwargs)
+        pb.blend_stored_embeddings(fract)
         
         kwargs = {}
         kwargs['guidance_scale'] = 0
@@ -865,8 +865,8 @@ while True:
             else:
                 fract += d_fract_embed + fract_osc
                 
-        do_new_space = midi_input.get("A3", button_mode="released_once")
-        if do_new_space:     
+        # do_new_space = midi_input.get("A3", button_mode="released_once") XXX
+        if False:     
             prompt_holder.set_next_space()
             list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
             gridrenderer.update(list_imgs)
@@ -874,11 +874,14 @@ while True:
         do_auto_change = midi_input.get("A4", button_mode="toggle")
         t_auto_change = midi_input.get("A2", val_min=1, val_max=10)
         
-        if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
+        
+        inject_new_prompt = midi_input.get("A3", button_mode="released_once")
+        if inject_new_prompt:
+        # if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
             # go to random img
-            
             space_prompt = random.choice(list_prompts)
             fract = 0
+            latents1 = latents_mix.clone()
             pb.set_prompt2(space_prompt, negative_prompt)
             is_noise_trans = False
             t_prompt_injected = time.time()
