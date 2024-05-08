@@ -426,6 +426,12 @@ class PromptHolder():
         return list_imgs 
             
 
+def remap_fract(x, c):
+    if x <= 0.5:
+        return 0.5 * np.power(2 * x, 1 / (1 + c))
+    else:
+        return 1 - 0.5 * np.power(2 * (1 - x), 1 / (1 + c))
+
 
 
 #%% inits
@@ -554,9 +560,6 @@ noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 # noodle_machine.create_noodle(['/test'], 'osc_zoom')
 
 
-is_noise_trans = True
-
-t_prompt_injected = time.time()
 
 img_noise_drive = np.random.randint(0, 255, (720, 1280, 3)).astype(np.uint8)
 
@@ -579,277 +582,260 @@ list_embed_modifiers = ["dramatic", "black and white", "metallic", "color explos
 ]
 
 
-# list_embed_modifiers = ["dramatic", "turbulent", "black and white", "metallic", "color explosion", "intense trauma", "horror", "spectacular", "sensational", "riveting", "dance macabre", "stormy", "violent", "extraterrestrial" ,"petrified", "motion", "progression"]
-
 idx_embed_mod = 0
 embeds_mod_full = pb.get_prompt_embeds(list_embed_modifiers[idx_embed_mod])
 
+fract_noise = 0
+fract_prompt = 0
 
 while True:
-    # cycle back from target to source
-    latents1 = latents2.clone()
-    pb.embeds1 = pb.embeds2
-    # get new target
-    latents2 = pb.get_latents()
-    # print("cycle completed, getting new latents")
-    pb.set_prompt2(space_prompt, negative_prompt)
-    fract = 0
-
-    while fract < 1:
-        dt = time.time() - t_last
-        t_last = time.time()
-        # show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
-        # if show_osc_visualization:
-        #     receiver.show_visualization()
-            
-        use_image2image = midi_input.get("G3", button_mode="toggle")
+    
+    if fract_noise >= 1:
+        # cycle back from target to source
+        fract_noise = 0
+        latents1 = latents2.clone()
+        latents2 = pb.get_latents()
         
-        # print(f'receiver messages: {receiver.dict_messages}')
-        # update oscs
-        show_osc_vals = midi_input.get("C4", button_mode="toggle")
-        for name in sound_feature_names:
-            noodle_machine.set_cause(f'{name}', receiver.get_last_value(f"/{name}"))
-            if show_osc_vals:
-                print(f'{name} {receiver.get_last_value(f"/{name}")}')
-                lt.dynamic_print(f"fps: {1/dt:.1f}")
-        
-        fract_emb = midi_input.get("B0", val_min=0, val_max=1, val_default=0)
-        if fract_emb > 0:
-            modulations['b0_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
-            for i in range(3):
-                modulations[f'd{i}_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
-        
-        fract_decoder_emb = midi_input.get("A5", val_min=0, val_max=1, val_default=0)
-        if fract_decoder_emb > 0:
-            embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, fract_decoder_emb)
-            modulations['d0_extra_embeds'] = embeds_mod[0]
-        
-        # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-        d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-        d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.1, val_default=0)
-        
-        cross_attention_kwargs ={}
-        cross_attention_kwargs['modulations'] = modulations        
-        
-        latents_mix = pb.interpolate_spherical(latents1, latents2, fract)
-        pb.blend_stored_embeddings(fract)
-        
-        kwargs = {}
-        kwargs['guidance_scale'] = 0.0
-        kwargs['latents'] = latents_mix
-        kwargs['prompt_embeds'] = pb.prompt_embeds
-        kwargs['negative_prompt_embeds'] = pb.negative_prompt_embeds
-        kwargs['pooled_prompt_embeds'] = pb.pooled_prompt_embeds
-        kwargs['negative_pooled_prompt_embeds'] = pb.negative_pooled_prompt_embeds
-        kwargs['strength'] = 0.5
-        kwargs['noise_img2img'] = noise_img2img
-        
-        if len(cross_attention_kwargs) > 0:
-            kwargs['cross_attention_kwargs'] = cross_attention_kwargs
-            
-        # img2img controls
-        do_new_movie = midi_input.get("F3", button_mode="released_once")
-        use_capture_dev = midi_input.get("G4", button_mode="toggle")
-        # use_cam = midi_input.get("H4", button_mode="toggle")
-        # if use_cam:
-        #     try:
-        #         cam = cam
-        #     except:
-        #         cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
-        #         cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
-                
-        do_color_matching = midi_input.get("F4", button_mode="toggle")
-        speed_movie = midi_input.get("B1", val_min=1, val_max=16, val_default=1)
-        hue_rot_drive = int(midi_input.get("G0", val_min=0.0, val_max=255, val_default=0))
-        
-        image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0.5)
-        color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
-        zoom_factor = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=1)
-        do_debug_verlay = midi_input.get("H3", button_mode="toggle")
-        
-        diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
-        diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
-        
-        mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
-        mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
-        
-        get_new_embed_modifier = midi_input.get("A4", button_mode="released_once")
-        
-        
-        if get_new_embed_modifier:
-            idx_embed_mod += 1
-            if idx_embed_mod == len(list_embed_modifiers):
-                idx_embed_mod = 0
-            prompt_enmbed_modifier = list_embed_modifiers[idx_embed_mod]
-            embeds_mod_full = pb.get_prompt_embeds(prompt_enmbed_modifier)
-            print(f"new embed modifier: {prompt_enmbed_modifier} idx {idx_embed_mod}")
-        
-        
-        
-        if use_image2image:
-            kwargs['num_inference_steps'] = 2
-            
-            if do_new_movie:
-                fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
-                print(f'switching movie to {fp_movie}')
-                movie_reader.load_movie(fp_movie)
-            
-            if use_capture_dev:
-                try:
-                    img_drive = cam.get_img()
-                except Exception as e:
-                    print("capture card fail!")
-            else:
-                # speed_movie += int(av_router.get_modulation('acid'))
-                # print(f'speedmovie {speed_movie} {av_router.get_modulation("acid")}')
-                
-                img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
-                img_drive = np.flip(img_drive, axis=2)
-                
-            
-            if hue_rot_drive > 0:
-                img_drive = rotate_hue(img_drive, hue_rot_drive)
-
-            image_init = cv2.resize(img_drive, (pb.w*8, pb.h*8))
-            
-            # print(av_router.get_modulation('diffusion_noise'), noodle_machine.get_effect('diffusion_noise'))
-            # cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255 XXX
-            # diffusion_noise = noodle_machine.get_effect('diffusion_noise')
-            diffusion_noise_mod = noodle_machine.get_effect('diffusion_noise_mod')
-            # diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
-            # diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
-            
-            diffusion_noise = 1 * (diffusion_noise_base + diffusion_noise_gain*diffusion_noise_mod)
-            
-            image_init = image_init.astype(np.float32)
-            image_init *= image_inlay_gain
-            
-            image_init = image_init + diffusion_noise*noise_cam
-            image_init = np.clip(image_init, 0, 255)
-            image_init = image_init.astype(np.uint8)
-            
-            mem_acid_mod = noodle_machine.get_effect('mem_acid_mod')
-            
-            mem_acid = mem_acid_base + mem_acid_gain * mem_acid_mod
-
-            if prev_diffusion_output is not None:
-                prev_diffusion_output = np.array(prev_diffusion_output)
-                prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
-                if zoom_factor != 1:
-                    prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe_img2img.device)
-                    prev_diffusion_output = zoom_image_torch(prev_diffusion_output, zoom_factor)
-                    prev_diffusion_output = prev_diffusion_output.cpu().numpy()
-                
-                image_init = image_init.astype(np.float32) * (1-mem_acid) + mem_acid*prev_diffusion_output.astype(np.float32)
-                image_init = image_init.astype(np.uint8)
-                
-                if do_color_matching:
-                    image_init_torch = torch.Tensor(image_init).cuda()
-                    prev_diffusion_output_torch = torch.Tensor(prev_diffusion_output).cuda()
-                    image_init_torch_matched, _ = multi_match_gpu([image_init_torch, prev_diffusion_output_torch], weights=[1-color_matching, color_matching], simple=False, clip_max=255, gpu=0,  is_input_tensor=True)
-                    image_init = image_init_torch_matched.cpu().numpy().astype(np.uint8)
-            
-            kwargs['image'] = Image.fromarray(image_init)
-            
-            img_mix = pipe_img2img(**kwargs).images[0]
-        else:
-            kwargs['num_inference_steps'] = 1
-            img_mix = pipe_text2img(**kwargs).images[0]
-            img_noise_drive = np.asarray(img_mix.copy())
-            
-
-        # save the previous diffusion output
-        img_mix = np.array(img_mix)
-        prev_diffusion_output = img_mix.astype(np.float32)
-        
-        hue_rot_mod = noodle_machine.get_effect('hue_rot_mod')
-        hue_rot_gain = midi_input.get("H0", val_min=0, val_max=1, val_default=0)
-        
-        hue_rot = 100 * hue_rot_gain * hue_rot_mod
-        
-        # img_mix = rotate_hue(img_mix, hue_rot)
-        
-        if do_debug_verlay and use_image2image:
-            secondary_renderer.render(img_drive)
-        else:
-            secondary_renderer.render(img_mix)
-        
-        # Handle clicks in gridrenderer
-        m,n = gridrenderer.render()
-        if m != -1 and n != -1:
-            try:
-                idx = m*nmb_cols + n
-                print(f'tile index {idx}: m {m} n {n}')
-                
-                if not prompt_holder.show_all_spaces:
-                    if idx == 0:
-                        # move into space view
-                        print(f'SHOWING ALL SPACES')
-                        list_imgs = prompt_holder.get_imgs_all_spaces(nmb_cols*nmb_rows)
-                        gridrenderer.update(list_imgs)
-                        prompt_holder.show_all_spaces = True
-                    elif idx == 1:
-                        print(f'REDRAWING IMAGES FROM SPCACE')
-                        list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
-                        gridrenderer.update(list_imgs)
-                    else:
-                        # recycle old current embeddings and latents
-                        pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract)
-                        latents1 = pb.interpolate_spherical(latents1, latents2, fract)
-                        space_prompt = list_prompts[idx]
-                        fract = 0
-                        pb.set_prompt2(space_prompt, negative_prompt)
-                        is_noise_trans = False
-                        t_prompt_injected = time.time()
-                else:
-                    # space selection
-                    prompt_holder.active_space = prompt_holder.list_spaces[idx]
-                    print(f"new activate space: {prompt_holder.active_space}") 
-                    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
-                    gridrenderer.update(list_imgs)
-                    prompt_holder.show_all_spaces = False
-                    
-            except Exception as e:
-                print(f"fail of click event! {e}")
-        # else:
-            
-            
-        # regular movement
-        fract_osc = 0
-        # fract_osc = av_router.get_modulation('diffusion_noise') # XXX
-        if is_noise_trans:
-            fract += d_fract_noise + fract_osc
-        else:
-            fract += d_fract_prompt + fract_osc
-                
-        do_new_space = midi_input.get("B3", button_mode="released_once") 
-        if do_new_space:     
-            prompt_holder.set_next_space()
-            list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
-            gridrenderer.update(list_imgs)
-            
-        do_auto_change = midi_input.get("B4", button_mode="toggle")
-        t_auto_change = midi_input.get("B2", val_min=1, val_max=10)
-        
-        if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
+    if fract_prompt >= 1:
+        if do_auto_change:
             # go to random img
             space_prompt = random.choice(list_prompts[2:]) #because of two buttons 
-            fract = 0
-            latents1 = latents_mix.clone()
-            pb.set_prompt2(space_prompt, negative_prompt)
-            is_noise_trans = False
-            t_prompt_injected = time.time()
             print(f"auto change to: {space_prompt}")
         
-        # do_new_prompts = midi_input.get("A4", akai_lpd8="A1", button_mode="pressed_once")
-        # if do_new_prompts:
-        #     list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
-        #     gridrenderer.update(list_imgs)
+        fract_prompt = 0
+        pb.embeds1 = pb.embeds2
+        pb.set_prompt2(space_prompt, negative_prompt)
+    
+    # fract = 0
+
+    # while fract < 1:
+    dt = time.time() - t_last
+    t_last = time.time()
+    # show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
+    # if show_osc_visualization:
+    #     receiver.show_visualization()
+        
+    use_image2image = midi_input.get("G3", button_mode="toggle")
+    
+    # print(f'receiver messages: {receiver.dict_messages}')
+    # update oscs
+    show_osc_vals = midi_input.get("C4", button_mode="toggle")
+    for name in sound_feature_names:
+        noodle_machine.set_cause(f'{name}', receiver.get_last_value(f"/{name}"))
+        if show_osc_vals:
+            print(f'{name} {receiver.get_last_value(f"/{name}")}')
+            lt.dynamic_print(f"fps: {1/dt:.1f}")
+    
+    fract_emb = midi_input.get("B0", val_min=0, val_max=1, val_default=0)
+    if fract_emb > 0:
+        modulations['b0_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
+        for i in range(3):
+            modulations[f'd{i}_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
+    
+    fract_decoder_emb = midi_input.get("A5", val_min=0, val_max=1, val_default=0)
+    if fract_decoder_emb > 0:
+        embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, fract_decoder_emb)
+        modulations['d0_extra_embeds'] = embeds_mod[0]
+    
+    # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+    d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+    d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.1, val_default=0)
+    
+    cross_attention_kwargs ={}
+    cross_attention_kwargs['modulations'] = modulations        
+    
+    latents_mix = pb.interpolate_spherical(latents1, latents2, fract_noise)
+    pb.blend_stored_embeddings(fract_prompt)
+    
+    kwargs = {}
+    kwargs['guidance_scale'] = 0.0
+    kwargs['latents'] = latents_mix
+    kwargs['prompt_embeds'] = pb.prompt_embeds
+    kwargs['negative_prompt_embeds'] = pb.negative_prompt_embeds
+    kwargs['pooled_prompt_embeds'] = pb.pooled_prompt_embeds
+    kwargs['negative_pooled_prompt_embeds'] = pb.negative_pooled_prompt_embeds
+    kwargs['strength'] = 0.5
+    kwargs['noise_img2img'] = noise_img2img
+    
+    if len(cross_attention_kwargs) > 0:
+        kwargs['cross_attention_kwargs'] = cross_attention_kwargs
+        
+    # img2img controls
+    do_new_movie = midi_input.get("F3", button_mode="released_once")
+    use_capture_dev = midi_input.get("G4", button_mode="toggle")
+    # use_cam = midi_input.get("H4", button_mode="toggle")
+    # if use_cam:
+    #     try:
+    #         cam = cam
+    #     except:
+    #         cam = lt.WebCam(cam_id=-1, shape_hw=shape_cam)
+    #         cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+            
+    do_color_matching = midi_input.get("F4", button_mode="toggle")
+    speed_movie = midi_input.get("B1", val_min=1, val_max=16, val_default=1)
+    hue_rot_drive = int(midi_input.get("G0", val_min=0.0, val_max=255, val_default=0))
+    
+    image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0.5)
+    color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
+    zoom_factor = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=1)
+    do_debug_verlay = midi_input.get("H3", button_mode="toggle")
+    
+    diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
+    diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
+    
+    mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
+    mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
+    
+    get_new_embed_modifier = midi_input.get("A4", button_mode="released_once")
+    
+    
+    if get_new_embed_modifier:
+        idx_embed_mod += 1
+        if idx_embed_mod == len(list_embed_modifiers):
+            idx_embed_mod = 0
+        prompt_enmbed_modifier = list_embed_modifiers[idx_embed_mod]
+        embeds_mod_full = pb.get_prompt_embeds(prompt_enmbed_modifier)
+        print(f"new embed modifier: {prompt_enmbed_modifier} idx {idx_embed_mod}")
+    
+    
+    
+    if use_image2image:
+        kwargs['num_inference_steps'] = 2
+        
+        if do_new_movie:
+            fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
+            print(f'switching movie to {fp_movie}')
+            movie_reader.load_movie(fp_movie)
+        
+        if use_capture_dev:
+            try:
+                img_drive = cam.get_img()
+            except Exception as e:
+                print("capture card fail!")
+        else:
+            # speed_movie += int(av_router.get_modulation('acid'))
+            # print(f'speedmovie {speed_movie} {av_router.get_modulation("acid")}')
+            
+            img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
+            img_drive = np.flip(img_drive, axis=2)
+            
+        
+        if hue_rot_drive > 0:
+            img_drive = rotate_hue(img_drive, hue_rot_drive)
+
+        image_init = cv2.resize(img_drive, (pb.w*8, pb.h*8))
+        
+        # print(av_router.get_modulation('diffusion_noise'), noodle_machine.get_effect('diffusion_noise'))
+        # cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255 XXX
+        # diffusion_noise = noodle_machine.get_effect('diffusion_noise')
+        diffusion_noise_mod = noodle_machine.get_effect('diffusion_noise_mod')
+        # diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
+        # diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
+        
+        diffusion_noise = 1 * (diffusion_noise_base + diffusion_noise_gain*diffusion_noise_mod)
+        
+        image_init = image_init.astype(np.float32)
+        image_init *= image_inlay_gain
+        
+        image_init = image_init + diffusion_noise*noise_cam
+        image_init = np.clip(image_init, 0, 255)
+        image_init = image_init.astype(np.uint8)
+        
+        mem_acid_mod = noodle_machine.get_effect('mem_acid_mod')
+        
+        mem_acid = mem_acid_base + mem_acid_gain * mem_acid_mod
+
+        if prev_diffusion_output is not None:
+            prev_diffusion_output = np.array(prev_diffusion_output)
+            prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
+            if zoom_factor != 1:
+                prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe_img2img.device)
+                prev_diffusion_output = zoom_image_torch(prev_diffusion_output, zoom_factor)
+                prev_diffusion_output = prev_diffusion_output.cpu().numpy()
+            
+            image_init = image_init.astype(np.float32) * (1-mem_acid) + mem_acid*prev_diffusion_output.astype(np.float32)
+            image_init = image_init.astype(np.uint8)
+            
+            if do_color_matching:
+                image_init_torch = torch.Tensor(image_init).cuda()
+                prev_diffusion_output_torch = torch.Tensor(prev_diffusion_output).cuda()
+                image_init_torch_matched, _ = multi_match_gpu([image_init_torch, prev_diffusion_output_torch], weights=[1-color_matching, color_matching], simple=False, clip_max=255, gpu=0,  is_input_tensor=True)
+                image_init = image_init_torch_matched.cpu().numpy().astype(np.uint8)
+        
+        kwargs['image'] = Image.fromarray(image_init)
+        
+        img_mix = pipe_img2img(**kwargs).images[0]
+    else:
+        kwargs['num_inference_steps'] = 1
+        img_mix = pipe_text2img(**kwargs).images[0]
+        img_noise_drive = np.asarray(img_mix.copy())
+        
+
+    # save the previous diffusion output
+    img_mix = np.array(img_mix)
+    prev_diffusion_output = img_mix.astype(np.float32)
+    
+    hue_rot_mod = noodle_machine.get_effect('hue_rot_mod')
+    hue_rot_gain = midi_input.get("H0", val_min=0, val_max=1, val_default=0)
+    
+    hue_rot = 100 * hue_rot_gain * hue_rot_mod
+    
+    # img_mix = rotate_hue(img_mix, hue_rot)
+    
+    if do_debug_verlay and use_image2image:
+        secondary_renderer.render(img_drive)
+    else:
+        secondary_renderer.render(img_mix)
+    
+    # Handle clicks in gridrenderer
+    m,n = gridrenderer.render()
+    if m != -1 and n != -1:
+        try:
+            idx = m*nmb_cols + n
+            print(f'tile index {idx}: m {m} n {n}')
+            
+            if not prompt_holder.show_all_spaces:
+                if idx == 0:
+                    # move into space view
+                    print(f'SHOWING ALL SPACES')
+                    list_imgs = prompt_holder.get_imgs_all_spaces(nmb_cols*nmb_rows)
+                    gridrenderer.update(list_imgs)
+                    prompt_holder.show_all_spaces = True
+                elif idx == 1:
+                    print(f'REDRAWING IMAGES FROM SPCACE')
+                    list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+                    gridrenderer.update(list_imgs)
+                else:
+                    # recycle old current embeddings and latents
+                    pb.embeds1 = pb.blend_prompts(pb.embeds1, pb.embeds2, fract_prompt)
+                    latents1 = pb.interpolate_spherical(latents1, latents2, fract_noise)
+                    space_prompt = list_prompts[idx]
+                    fract_noise = 0
+                    fract_prompt = 0
+                    pb.set_prompt2(space_prompt, negative_prompt)
+            else:
+                # space selection
+                prompt_holder.active_space = prompt_holder.list_spaces[idx]
+                print(f"new activate space: {prompt_holder.active_space}") 
+                list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+                gridrenderer.update(list_imgs)
+                prompt_holder.show_all_spaces = False
                 
-    idx_cycle += 1
-    is_noise_trans = True
-
-
+        except Exception as e:
+            print(f"fail of click event! {e}")
+        
+    fract_osc = 0
+    # fract_osc = av_router.get_modulation('diffusion_noise') # XXX
+    fract_noise += d_fract_noise + fract_osc
+    fract_prompt += d_fract_prompt + fract_osc
+            
+    do_new_space = midi_input.get("B3", button_mode="released_once") 
+    if do_new_space:     
+        prompt_holder.set_next_space()
+        list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
+        gridrenderer.update(list_imgs)
+        
+    do_auto_change = midi_input.get("B4", button_mode="toggle")
 
 
 
