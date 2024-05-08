@@ -559,6 +559,7 @@ noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
 t_last = time.time()
 
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
+effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot']
 
 # av_router.map_av('SUB', 'b0_samp')
 # av_router.map_av('DJMID', 'diffusion_noise')
@@ -566,9 +567,12 @@ sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 # av_router.map_av('DJLOW', 'acid')
 # av_router.map_av('SUB', 'fract_decoder_emb')
 # av_router.map_av('DJHIGH', 'hue_rot')
-noodle_machine.create_noodle(['DJMID', 'H1', 'G1'], 'diffusion_noise', lambda x: 255*x[0]*x[1]+x[2])
-noodle_machine.create_noodle(['DJLOW','H2','G2'], 'alpha_acid', lambda x: 10*x[0]*x[1]+x[2])
-noodle_machine.create_noodle(['DJHIGH','H0'], 'hue_rot_mix', lambda x: 100*x[0]*x[1])
+noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
+noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
+noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
+# noodle_machine.create_noodle(['DJMID', 'H1', 'G1'], 'diffusion_noise', lambda x: 255*x[0]*x[1]+x[2])
+# noodle_machine.create_noodle(['DJLOW','H2','G2'], 'alpha_acid', lambda x: 10*x[0]*x[1]+x[2])
+# noodle_machine.create_noodle(['DJHIGH','H0'], 'hue_rot_mix', lambda x: 100*x[0]*x[1])
 # noodle_machine.create_noodle(['/test'], 'osc_zoom')
 
 
@@ -607,16 +611,16 @@ while True:
                 print(f'{name} {receiver.get_last_value(f"/{name}")}')
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
-        # update midi
-        allowed_midi_rows = ["A", "B", "C", "D", "E", "F", "G", "H"]
-        allowed_midi_cols = ["0", "1", "2", "5"]
-        for cause in list(noodle_machine.causes.keys()):
-            if len(cause) == 2 and cause[0] in allowed_midi_rows and cause[1] in allowed_midi_cols:
-                for x in noodle_machine.effect2causes:
-                    if cause in noodle_machine.effect2causes[x]:
-                        effect_name = x
-                noodle_mod = midi_input.get(cause, val_min=0, val_max=1, val_default=0, variable_name=f"NM {effect_name}")
-                noodle_machine.set_cause(cause, noodle_mod)
+        # # update midi
+        # allowed_midi_rows = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        # allowed_midi_cols = ["0", "1", "2", "5"]
+        # for cause in list(noodle_machine.causes.keys()):
+        #     if len(cause) == 2 and cause[0] in allowed_midi_rows and cause[1] in allowed_midi_cols:
+        #         for x in noodle_machine.effect2causes:
+        #             if cause in noodle_machine.effect2causes[x]:
+        #                 effect_name = x
+        #         noodle_mod = midi_input.get(cause, val_min=0, val_max=1, val_default=0, variable_name=f"NM {effect_name}")
+        #         noodle_machine.set_cause(cause, noodle_mod)
                 
         
         # modulate osc with akai
@@ -689,7 +693,7 @@ while True:
         do_color_matching = midi_input.get("F4", button_mode="toggle")
         speed_movie = midi_input.get("C5", val_min=1, val_max=16, val_default=1)
         hue_rot_drive = int(midi_input.get("G0", val_min=0.0, val_max=255, val_default=0))
-        # cam_noise_coef = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
+        
         image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0)
         # alpha_acid = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
         # noodle_machine.set_cause("G2", alpha_acid)
@@ -698,7 +702,17 @@ while True:
         # zoom_factor = 0.75 + 0.5*xx 
         do_debug_verlay = midi_input.get("H3", button_mode="toggle")
         
+        diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
+        diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
+        
+        mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
+        mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
+        
+        use_noise_drive = midi_input.get("B4", button_mode="toggle")
+        
         if use_image2image:
+            
+            
             # success, image_init = vidcap.read()
             # image_init = cv2.resize(image_init, (pb.w*4, pb.h*4))
             # image_init_input = render_moving_rotating_triangles(shape, triangles)
@@ -723,7 +737,7 @@ while True:
                 img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
                 img_drive = np.flip(img_drive, axis=2)
                 
-            use_noise_drive = midi_input.get("B4", button_mode="toggle")
+            # use_noise_drive = midi_input.get("B4", button_mode="toggle")
             if use_noise_drive:
                 img_drive = img_noise_drive
             
@@ -734,7 +748,12 @@ while True:
             
             # print(av_router.get_modulation('diffusion_noise'), noodle_machine.get_effect('diffusion_noise'))
             # cam_noise_coef += av_router.get_modulation('diffusion_noise') * 255 XXX
-            diffusion_noise = noodle_machine.get_effect('diffusion_noise')
+            # diffusion_noise = noodle_machine.get_effect('diffusion_noise')
+            diffusion_noise_mod = noodle_machine.get_effect('diffusion_noise_mod')
+            # diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
+            # diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
+            
+            diffusion_noise = 1 * (diffusion_noise_base + diffusion_noise_gain*diffusion_noise_mod)
             
             image_init = image_init.astype(np.float32)
             image_init *= image_inlay_gain
@@ -745,8 +764,12 @@ while True:
             image_init = image_init.astype(np.uint8)
             
             # alpha_acid += av_router.get_modulation('acid') * 10 XXX
-            alpha_acid = noodle_machine.get_effect('alpha_acid')
-            print(f'alpha_acid: {alpha_acid}')
+            mem_acid_mod = noodle_machine.get_effect('mem_acid_mod')
+            # mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
+            # mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
+            
+            mem_acid = mem_acid_base + mem_acid_gain * mem_acid_mod
+            # print(f'alpha_acid: {alpha_acid}')
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
@@ -756,7 +779,7 @@ while True:
                     prev_diffusion_output = zoom_image_torch(prev_diffusion_output, zoom_factor)
                     prev_diffusion_output = prev_diffusion_output.cpu().numpy()
                 
-                image_init = image_init.astype(np.float32) * (1-alpha_acid) + alpha_acid*prev_diffusion_output.astype(np.float32)
+                image_init = image_init.astype(np.float32) * (1-mem_acid) + mem_acid*prev_diffusion_output.astype(np.float32)
                 image_init = image_init.astype(np.uint8)
                 
                 if do_color_matching:
@@ -780,8 +803,12 @@ while True:
         img_mix = np.array(img_mix)
         prev_diffusion_output = img_mix.astype(np.float32)
         
-        hue_rot_mix = noodle_machine.get_effect('hue_rot_mix')
-        img_mix = rotate_hue(img_mix, hue_rot_mix) # XXX
+        hue_rot_mod = noodle_machine.get_effect('hue_rot_mod')
+        hue_rot_gain = midi_input.get("H0", val_min=0, val_max=1, val_default=0)
+        
+        hue_rot = 100 * hue_rot_gain * hue_rot_mod
+        
+        img_mix = rotate_hue(img_mix, hue_rot) # XXX
         # img_mix = rotate_hue(img_mix, int(av_router.get_modulation('hue_rot'))) # XXX
         
         if do_debug_verlay and use_image2image:
