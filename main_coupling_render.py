@@ -675,6 +675,8 @@ while True:
         kwargs['negative_prompt_embeds'] = pb.negative_prompt_embeds
         kwargs['pooled_prompt_embeds'] = pb.pooled_prompt_embeds
         kwargs['negative_pooled_prompt_embeds'] = pb.negative_pooled_prompt_embeds
+        kwargs['strength'] = 0.5
+        kwargs['noise_img2img'] = noise_img2img
         
         if len(cross_attention_kwargs) > 0:
             kwargs['cross_attention_kwargs'] = cross_attention_kwargs
@@ -789,10 +791,7 @@ while True:
                     image_init = image_init_torch_matched.cpu().numpy().astype(np.uint8)
             
             kwargs['image'] = Image.fromarray(image_init)
-            kwargs['num_inference_steps'] = 2
-            kwargs['strength'] = 0.5
-            kwargs['guidance_scale'] = 0.5
-            kwargs['noise_img2img'] = noise_img2img
+            
             
             img_mix = pipe_img2img(**kwargs).images[0]
         else:
