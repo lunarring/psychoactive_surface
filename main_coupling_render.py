@@ -398,7 +398,7 @@ class PromptHolder():
         list_prompts = []
         
         # decide if we take subsequent or random
-        nmb_imgs_space = len(self.prompt_spaces[self.active_space]) - 2 # two buttons exist
+        nmb_imgs_space = len(self.prompt_spaces[self.active_space])
         if nmb_imgs_space < nmb_imgs:
             idx_imgs = np.arange(nmb_imgs_space)
         else:
@@ -705,9 +705,6 @@ while True:
                 img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
                 img_drive = np.flip(img_drive, axis=2)
                 
-            # use_noise_drive = midi_input.get("B4", button_mode="toggle")
-            if use_noise_drive:
-                img_drive = img_noise_drive
             
             if hue_rot_drive > 0:
                 img_drive = rotate_hue(img_drive, hue_rot_drive)
@@ -834,7 +831,7 @@ while True:
         
         if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
             # go to random img
-            space_prompt = random.choice(list_prompts)
+            space_prompt = random.choice(list_prompts[2:]) #because of two buttons 
             fract = 0
             latents1 = latents_mix.clone()
             pb.set_prompt2(space_prompt, negative_prompt)
