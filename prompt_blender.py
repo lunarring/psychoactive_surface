@@ -122,9 +122,11 @@ class PromptBlender:
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
     
 
-    def blend_stored_embeddings(self, fract):
+    def blend_stored_embeddings(self, fract, force_seed=420):
         assert hasattr(self, 'embeds1'), "embeds1 not set. Please set embeds1 before blending."
         assert hasattr(self, 'embeds2'), "embeds2 not set. Please set embeds2 before blending."
+        if force_seed not None:
+            torch.manual_seed(force_seed)
         fract = max(0, min(fract, 1))
         self.embeds_current = self.blend_prompts(self.embeds1, self.embeds2, fract)
         self.prompt_embeds, self.negative_prompt_embeds, self.pooled_prompt_embeds, self.negative_pooled_prompt_embeds = self.embeds_current
@@ -145,12 +147,6 @@ class PromptBlender:
 
         return blended_prompt_embeds, blended_negative_prompt_embeds, blended_pooled_prompt_embeds, blended_negative_pooled_prompt_embeds
 
-
-    def generate_blended_img(self, fract, latents=None, cross_attention_kwargs={}):
-        # Set the embeddings first with blend_stored_embeddings
-        torch.manual_seed(420)
-        fract = np.clip(fract, 0, 1)
-        self.blend_stored_embeddings(fract)
         
     def generate_img(self, latents, prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds):
         image = self.pipe(guidance_scale=0.0, num_inference_steps=self.num_inference_steps, latents=latents, 
