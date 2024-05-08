@@ -1,6 +1,9 @@
 # Custom
 good*.txt
 embds_imgs/*
+promptbreeder*.txt
+prompt*.txt
+tmp*.py
 logs/*
 xj*.py
 xa*.py
