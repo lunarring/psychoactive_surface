@@ -277,23 +277,6 @@ class NoodleMachine():
                 
 
 
-
-class AudioVisualRouter():
-    def __init__(self, meta_input):
-        self.meta_input = meta_input
-        self.sound_features = {}
-        self.visual2sound = {}
-        
-    def map_av(self, sound_feature_name, visual_effect_name):
-        self.visual2sound[visual_effect_name] = sound_feature_name
-        
-    def update_sound(self, sound_feature_name, value):
-        self.sound_features[sound_feature_name] = value
-        
-    def get_modulation(self, visual_effect_name):
-        return self.sound_features[self.visual2sound[visual_effect_name]]
-
-
 class PromptHolder():
     def __init__(self, prompt_blender, size_img_tiles_hw, use_image2image=False):
         self.use_image2image = use_image2image
@@ -524,7 +507,6 @@ movie_reader = MovieReaderCustom(fp_movie)
 
 
 #%%#
-# av_router = AudioVisualRouter(meta_input)
 noodle_machine = NoodleMachine()
 
 negative_prompt = "blurry, lowres, disfigured"
@@ -561,12 +543,6 @@ t_last = time.time()
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot']
 
-# av_router.map_av('SUB', 'b0_samp')
-# av_router.map_av('DJMID', 'diffusion_noise')
-# av_router.map_av('SUB', 'd*_emb')
-# av_router.map_av('DJLOW', 'acid')
-# av_router.map_av('SUB', 'fract_decoder_emb')
-# av_router.map_av('DJHIGH', 'hue_rot')
 noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
 noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
 noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
@@ -605,7 +581,6 @@ while True:
         # update oscs
         show_osc_vals = midi_input.get("C4", button_mode="toggle")
         for name in sound_feature_names:
-            # av_router.update_sound(f'{name}', receiver.get_last_value(f"/{name}"))
             noodle_machine.set_cause(f'{name}', receiver.get_last_value(f"/{name}"))
             if show_osc_vals:
                 print(f'{name} {receiver.get_last_value(f"/{name}")}')
@@ -633,7 +608,7 @@ while True:
         pb.blend_stored_embeddings(fract)
         
         kwargs = {}
-        kwargs['guidance_scale'] = 0.5
+        kwargs['guidance_scale'] = 0.0
         kwargs['latents'] = latents_mix
         kwargs['prompt_embeds'] = pb.prompt_embeds
         kwargs['negative_prompt_embeds'] = pb.negative_prompt_embeds
