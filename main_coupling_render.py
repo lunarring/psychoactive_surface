@@ -41,7 +41,7 @@ height_renderer = 512*2
 
 size_img_tiles_hw = (120, 260)   # tile image size
 nmb_rows, nmb_cols = (7,7)       # number of tiles
-ip_address_osc_receiver = '192.168.50.130'
+ip_address_osc_receiver = '10.40.49.28'
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
 use_cam = True
@@ -503,7 +503,7 @@ if use_cam:
     cam = lt.WebCam(cam_id=0, shape_hw=shape_cam)
     cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
-receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8004)
+receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8003)
 if show_osc_visualization:
     receiver.start_visualization(shape_hw_vis=(300, 500), nmb_cols_vis=3, nmb_rows_vis=2,backend='opencv')
 
@@ -569,10 +569,15 @@ sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 noodle_machine.create_noodle(['DJMID', 'H1', 'G1'], 'diffusion_noise', lambda x: 255*x[0]*x[1]+x[2])
 noodle_machine.create_noodle(['DJLOW','H2','G2'], 'alpha_acid', lambda x: 10*x[0]*x[1]+x[2])
 noodle_machine.create_noodle(['DJHIGH','H0'], 'hue_rot_mix', lambda x: 100*x[0]*x[1])
+# noodle_machine.create_noodle(['/test'], 'osc_zoom')
+
 
 is_noise_trans = True
 
 t_prompt_injected = time.time()
+
+img_noise_drive = np.random.randint(0, 255, (720, 1280, 3)).astype(np.uint8)
+
 
 while True:
     # cycle back from target to source
@@ -592,6 +597,7 @@ while True:
             
         use_image2image = midi_input.get("G3", button_mode="toggle")
         
+        # print(f'receiver messages: {receiver.dict_messages}')
         # update oscs
         show_osc_vals = midi_input.get("C4", button_mode="toggle")
         for name in sound_feature_names:
@@ -689,6 +695,7 @@ while True:
         # noodle_machine.set_cause("G2", alpha_acid)
         color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
         zoom_factor = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=1)
+        # zoom_factor = 0.75 + 0.5*xx 
         do_debug_verlay = midi_input.get("H3", button_mode="toggle")
         
         if use_image2image:
@@ -715,6 +722,10 @@ while True:
                 
                 img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
                 img_drive = np.flip(img_drive, axis=2)
+                
+            use_noise_drive = midi_input.get("B4", button_mode="toggle")
+            if use_noise_drive:
+                img_drive = img_noise_drive
             
             if hue_rot_drive > 0:
                 img_drive = rotate_hue(img_drive, hue_rot_drive)
@@ -735,8 +746,7 @@ while True:
             
             # alpha_acid += av_router.get_modulation('acid') * 10 XXX
             alpha_acid = noodle_machine.get_effect('alpha_acid')
-
-            # print(f'alpha acid :{alpha_acid}, {nm_alpha_acid}')
+            print(f'alpha_acid: {alpha_acid}')
 
             if prev_diffusion_output is not None:
                 prev_diffusion_output = np.array(prev_diffusion_output)
