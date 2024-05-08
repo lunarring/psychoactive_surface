@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from image_processing import multi_match_gpu
 #%% VARS
-use_compiled_model = False
+use_compiled_model = True
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -591,6 +591,7 @@ while True:
     pb.embeds1 = pb.embeds2
     # get new target
     latents2 = pb.get_latents()
+    # print("cycle completed, getting new latents")
     pb.set_prompt2(space_prompt, negative_prompt)
     fract = 0
 
@@ -624,8 +625,8 @@ while True:
             modulations['d0_extra_embeds'] = embeds_mod[0]
         
         # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-        d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.02, val_default=0)
-        d_fract_embed = midi_input.get("A1", val_min=0.0, val_max=0.02, val_default=0)
+        d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+        d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.1, val_default=0)
         
         cross_attention_kwargs ={}
         cross_attention_kwargs['modulations'] = modulations        
@@ -672,7 +673,7 @@ while True:
         mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
         mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
         
-        get_new_embed_modifier = midi_input.get("B4", button_mode="released_once")
+        get_new_embed_modifier = midi_input.get("A4", button_mode="released_once")
         
         
         if get_new_embed_modifier:
@@ -810,24 +811,25 @@ while True:
                     
             except Exception as e:
                 print(f"fail of click event! {e}")
+        # else:
+            
+            
+        # regular movement
+        fract_osc = 0
+        # fract_osc = av_router.get_modulation('diffusion_noise') # XXX
+        if is_noise_trans:
+            fract += d_fract_noise + fract_osc
         else:
-            # regular movement
-            fract_osc = 0
-            # fract_osc = av_router.get_modulation('diffusion_noise') # XXX
-            if is_noise_trans:
-                fract += d_fract_noise + fract_osc
-            else:
-                fract += d_fract_embed + fract_osc
+            fract += d_fract_prompt + fract_osc
                 
-        do_new_space = midi_input.get("A3", button_mode="released_once") 
+        do_new_space = midi_input.get("B3", button_mode="released_once") 
         if do_new_space:     
             prompt_holder.set_next_space()
             list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
             gridrenderer.update(list_imgs)
             
-        do_auto_change = midi_input.get("A4", button_mode="toggle")
-        t_auto_change = midi_input.get("A2", val_min=1, val_max=10)
-        
+        do_auto_change = midi_input.get("B4", button_mode="toggle")
+        t_auto_change = midi_input.get("B2", val_min=1, val_max=10)
         
         if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
             # go to random img
