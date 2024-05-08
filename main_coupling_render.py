@@ -33,7 +33,7 @@ import torch.nn.functional as F
 from image_processing import multi_match_gpu
 #%% VARS
 use_compiled_model = False
-res_fact = 1.0
+res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
 width_renderer = int(1024*2)
@@ -46,10 +46,12 @@ dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
 use_cam = True
 
+
 # key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
 
 #%% aux func
-
+width_latents = int(np.round(width_latents/16)*16)
+height_latents = int(np.round(height_latents/16)*16)
 shape_cam=(600,800) 
 
 class MovieReaderCustom():
@@ -558,6 +560,30 @@ t_prompt_injected = time.time()
 
 img_noise_drive = np.random.randint(0, 255, (720, 1280, 3)).astype(np.uint8)
 
+list_embed_modifiers = ["dramatic", "black and white", "metallic", "color explosion", "wood", 
+    "stone", "abstract", "rusty", "bright", "high contrast", "neon", "surreal",
+    "minimalistic", "vintage", "futuristic",  "glossy",
+    "matte finish", "psychedelic", "gritty", "ethereal", "soft focus", "glowing",
+    "shadowy", "muted colors", "saturated", "dusty", "crystalline", "film noir",
+    "steampunk", "monochrome",  "holographic", "textured",
+    "velvet", "mirror", "blurry", "geometric", "mosaic", "oil-painted",
+    "watercolor", "charcoal sketch", "pen and ink", "silhouetted",
+    "thermal imaging", "acidic", "noir",
+    "zen", "chaotic", "floral", "urban decay", "oceanic", "space", "cyberpunk",
+    "tropical", "antique", "radiant", "ghostly", "disco",
+    "medieval",  "glitch", "pop art", "frosted",
+    "chiaroscuro", "apocalyptic", "heavenly", "infernal", "submerged",
+    "jewel-toned", "bioluminescent", "lace", "bejeweled",
+    "enamel", "tattooed", "cobwebbed", "granular", "rippled", "pixelated",
+    "collage", "marbled", "fluffy", "frozen"
+]
+
+
+# list_embed_modifiers = ["dramatic", "turbulent", "black and white", "metallic", "color explosion", "intense trauma", "horror", "spectacular", "sensational", "riveting", "dance macabre", "stormy", "violent", "extraterrestrial" ,"petrified", "motion", "progression"]
+
+idx_embed_mod = 0
+embeds_mod_full = pb.get_prompt_embeds(list_embed_modifiers[idx_embed_mod])
+
 
 while True:
     # cycle back from target to source
@@ -586,7 +612,7 @@ while True:
                 print(f'{name} {receiver.get_last_value(f"/{name}")}')
                 lt.dynamic_print(f"fps: {1/dt:.1f}")
         
-        fract_emb = midi_input.get("B5", val_min=0, val_max=1, val_default=0)
+        fract_emb = midi_input.get("B0", val_min=0, val_max=1, val_default=0)
         if fract_emb > 0:
             modulations['b0_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
             for i in range(3):
@@ -632,7 +658,7 @@ while True:
         #         cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
                 
         do_color_matching = midi_input.get("F4", button_mode="toggle")
-        speed_movie = midi_input.get("C5", val_min=1, val_max=16, val_default=1)
+        speed_movie = midi_input.get("B1", val_min=1, val_max=16, val_default=1)
         hue_rot_drive = int(midi_input.get("G0", val_min=0.0, val_max=255, val_default=0))
         
         image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0.5)
@@ -646,7 +672,18 @@ while True:
         mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
         mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
         
-        use_noise_drive = midi_input.get("B4", button_mode="toggle")
+        get_new_embed_modifier = midi_input.get("B4", button_mode="released_once")
+        
+        
+        if get_new_embed_modifier:
+            idx_embed_mod += 1
+            if idx_embed_mod == len(list_embed_modifiers):
+                idx_embed_mod = 0
+            prompt_enmbed_modifier = list_embed_modifiers[idx_embed_mod]
+            embeds_mod_full = pb.get_prompt_embeds(prompt_enmbed_modifier)
+            print(f"new embed modifier: {prompt_enmbed_modifier} idx {idx_embed_mod}")
+        
+        
         
         if use_image2image:
             kwargs['num_inference_steps'] = 2
