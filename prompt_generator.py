@@ -96,6 +96,6 @@ if __name__ == "__main__":
         b_good.click(gh.save, inputs=[current_prompt], outputs=None)
         
     
-    demo.launch(share=True, inbrowser=True, inline=False)
+    demo.launch(share=True, inbrowser=True, inline=False, server_name=args.server_ip)
 
         
