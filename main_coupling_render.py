@@ -437,7 +437,6 @@ def remap_fract(x, c):
 #%% inits
 midi_input = lt.MidiInput(device_name="akai_midimix")
 
-
 pipe_img2img = AutoPipelineForImage2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
 pipe_text2img = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
     
@@ -563,7 +562,7 @@ noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 
 img_noise_drive = np.random.randint(0, 255, (720, 1280, 3)).astype(np.uint8)
 
-list_embed_modifiers = ["dramatic", "black and white", "metallic", "color explosion", "wood", 
+list_embed_modifiers_prompts = ["dramatic", "black and white", "metallic", "color explosion", "wood", 
     "stone", "abstract", "rusty", "bright", "high contrast", "neon", "surreal",
     "minimalistic", "vintage", "futuristic",  "glossy",
     "matte finish", "psychedelic", "gritty", "ethereal", "soft focus", "glowing",
@@ -581,12 +580,30 @@ list_embed_modifiers = ["dramatic", "black and white", "metallic", "color explos
     "collage", "marbled", "fluffy", "frozen"
 ]
 
+nmb_embed_modifiers = 5
+selected_modifiers = random.sample(list_embed_modifiers_prompts, nmb_embed_modifiers)
+selected_embeds = [pb.get_prompt_embeds(modifier) for modifier in selected_modifiers]
+
+
+
+def compute_mixed_embed(selected_embeds, weights):
+    embeds_mod_full = []
+    for i in range(4):
+        for j in range(len(weights)):
+            if j==0:
+                emb = selected_embeds[j][i] * weights[j]
+            else:
+                emb += selected_embeds[j][i] * weights[j]
+        embeds_mod_full.append(emb)
+    return embeds_mod_full
 
 idx_embed_mod = 0
-embeds_mod_full = pb.get_prompt_embeds(list_embed_modifiers[idx_embed_mod])
+embeds_mod_full = pb.get_prompt_embeds(list_embed_modifiers_prompts[idx_embed_mod])
 
+# embeds_mod_full = embeds_mod_full1
 fract_noise = 0
 fract_prompt = 0
+
 
 while True:
     
@@ -594,7 +611,7 @@ while True:
         # cycle back from target to source
         fract_noise = 0
         latents1 = latents2.clone()
-        latents2 = pb.get_latents()
+        latents2 = pb.get_latents() 
         
     if fract_prompt >= 1:
         if do_auto_change:
@@ -632,10 +649,22 @@ while True:
         for i in range(3):
             modulations[f'd{i}_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
     
-    fract_decoder_emb = midi_input.get("B5", val_min=0, val_max=1, val_default=0)
-    if fract_decoder_emb > 0:
-        embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, fract_decoder_emb)
-        modulations['d0_extra_embeds'] = embeds_mod[0]
+    
+    enable_embed_mod = midi_input.get("A3", button_mode="toggle")
+    if enable_embed_mod:
+        weights_emb = []
+        for k in range(nmb_embed_modifiers):
+            weights_emb.append(midi_input.get(f"{chr(65 + k)}5", val_min=0, val_max=1, val_default=0, variable_name = f"embed {k}"))
+        
+        embeds_mod_full = compute_mixed_embed(selected_embeds, weights_emb)
+        total_weight = np.sum(np.asarray(weights_emb))
+        embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, total_weight)
+        if total_weight > 0:
+            modulations['d0_extra_embeds'] = embeds_mod[0]
+    else:
+        if 'd0_extra_embeds' in modulations:
+            del modulations['d0_extra_embeds']
+        
     
     # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
     d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
@@ -689,14 +718,15 @@ while True:
     
     get_new_embed_modifier = midi_input.get("B4", button_mode="released_once")
     
-    
     if get_new_embed_modifier:
-        idx_embed_mod += 1
-        if idx_embed_mod == len(list_embed_modifiers):
-            idx_embed_mod = 0
-        prompt_enmbed_modifier = list_embed_modifiers[idx_embed_mod]
-        embeds_mod_full = pb.get_prompt_embeds(prompt_enmbed_modifier)
-        print(f"new embed modifier: {prompt_enmbed_modifier} idx {idx_embed_mod}")
+        selected_modifiers = random.sample(list_embed_modifiers_prompts, nmb_embed_modifiers)
+        selected_embeds = [pb.get_prompt_embeds(modifier) for modifier in selected_modifiers]
+        # idx_embed_mod += 1
+        # if idx_embed_mod == len(list_embed_modifiers_prompts):
+        #     idx_embed_mod = 0
+        # prompt_embed_modifier = list_embed_modifiers_prompts[idx_embed_mod]
+        # embeds_mod_full = pb.get_prompt_embeds(prompt_embed_modifier)
+        # print(f"new embed modifier: {prompt_embed_modifier} idx {idx_embed_mod}")
     
     
     
