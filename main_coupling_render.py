@@ -43,8 +43,8 @@ size_img_tiles_hw = (120, 260)   # tile image size
 nmb_rows, nmb_cols = (7,7)       # number of tiles
 ip_address_osc_receiver = '10.40.49.28'
 dir_embds_imgs = "embds_imgs"
-show_osc_visualization = True
-use_cam = True
+show_osc_visualization = False
+use_cam = False
 
 
 # key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
