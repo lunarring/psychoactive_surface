@@ -632,7 +632,7 @@ while True:
         for i in range(3):
             modulations[f'd{i}_emb'] = torch.tensor(1 - fract_emb, device=latents1.device)        
     
-    fract_decoder_emb = midi_input.get("A5", val_min=0, val_max=1, val_default=0)
+    fract_decoder_emb = midi_input.get("B5", val_min=0, val_max=1, val_default=0)
     if fract_decoder_emb > 0:
         embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, fract_decoder_emb)
         modulations['d0_extra_embeds'] = embeds_mod[0]
@@ -645,7 +645,8 @@ while True:
     cross_attention_kwargs['modulations'] = modulations        
     
     latents_mix = pb.interpolate_spherical(latents1, latents2, fract_noise)
-    pb.blend_stored_embeddings(fract_prompt)
+    fract_prompt_nonlinearity = midi_input.get("A2", val_min=0.0, val_max=3, val_default=0)
+    pb.blend_stored_embeddings(remap_fract(fract_prompt, fract_prompt_nonlinearity))
     
     kwargs = {}
     kwargs['guidance_scale'] = 0.0
@@ -686,7 +687,7 @@ while True:
     mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
     mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
     
-    get_new_embed_modifier = midi_input.get("A4", button_mode="released_once")
+    get_new_embed_modifier = midi_input.get("B4", button_mode="released_once")
     
     
     if get_new_embed_modifier:
@@ -835,7 +836,9 @@ while True:
         list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
         gridrenderer.update(list_imgs)
         
-    do_auto_change = midi_input.get("B4", button_mode="toggle")
+    do_auto_change = midi_input.get("A4", button_mode="toggle")
+    
+
 
 
 
