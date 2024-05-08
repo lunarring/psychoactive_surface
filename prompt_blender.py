@@ -125,7 +125,7 @@ class PromptBlender:
     def blend_stored_embeddings(self, fract, force_seed=420):
         assert hasattr(self, 'embeds1'), "embeds1 not set. Please set embeds1 before blending."
         assert hasattr(self, 'embeds2'), "embeds2 not set. Please set embeds2 before blending."
-        if force_seed not None:
+        if force_seed is not None:
             torch.manual_seed(force_seed)
         fract = max(0, min(fract, 1))
         self.embeds_current = self.blend_prompts(self.embeds1, self.embeds2, fract)
