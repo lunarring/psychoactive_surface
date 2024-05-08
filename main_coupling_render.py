@@ -865,8 +865,8 @@ while True:
             else:
                 fract += d_fract_embed + fract_osc
                 
-        # do_new_space = midi_input.get("A3", button_mode="released_once") XXX
-        if False:     
+        do_new_space = midi_input.get("A3", button_mode="released_once") 
+        if do_new_space:     
             prompt_holder.set_next_space()
             list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
             gridrenderer.update(list_imgs)
@@ -875,9 +875,7 @@ while True:
         t_auto_change = midi_input.get("A2", val_min=1, val_max=10)
         
         
-        inject_new_prompt = midi_input.get("A3", button_mode="released_once")
-        if inject_new_prompt:
-        # if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
+        if do_auto_change and is_noise_trans and time.time() - t_prompt_injected > t_auto_change:
             # go to random img
             space_prompt = random.choice(list_prompts)
             fract = 0
