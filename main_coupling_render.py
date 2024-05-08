@@ -669,7 +669,7 @@ while True:
         
         kwargs = {}
         kwargs['guidance_scale'] = 0
-        kwargs['num_inference_steps'] = pb.num_inference_steps
+        kwargs['num_inference_steps'] = 2 #pb.num_inference_steps
         kwargs['latents'] = latents_mix
         kwargs['prompt_embeds'] = pb.prompt_embeds
         kwargs['negative_prompt_embeds'] = pb.negative_prompt_embeds
@@ -696,7 +696,7 @@ while True:
         speed_movie = midi_input.get("C5", val_min=1, val_max=16, val_default=1)
         hue_rot_drive = int(midi_input.get("G0", val_min=0.0, val_max=255, val_default=0))
         
-        image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0)
+        image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=1)
         # alpha_acid = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
         # noodle_machine.set_cause("G2", alpha_acid)
         color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
@@ -791,7 +791,6 @@ while True:
                     image_init = image_init_torch_matched.cpu().numpy().astype(np.uint8)
             
             kwargs['image'] = Image.fromarray(image_init)
-            
             
             img_mix = pipe_img2img(**kwargs).images[0]
         else:
