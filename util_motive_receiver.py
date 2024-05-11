@@ -102,6 +102,7 @@ class MarkerTracker:
         dict_package = {"frame_id" : frame_id, "timestamp" : timestamp}
         dict_package["labeled_markers"] = self.extract_labeled_markers(data)
         dict_package["unlabeled_markers"] = self.extract_unlabeled_markers(data)
+        dict_package["rigid_bodies"] = self.extract_rigid_bodies(data)
         
         self.list_dict_packets.append(dict_package)
 
@@ -122,6 +123,38 @@ class MarkerTracker:
                 timestamp = parts[1].strip()
         return frame_id, timestamp
         
+    def extract_rigid_bodies(self, data):
+        rigid_bodies = {}
+        body_labels = ["lefthand", "righthand", "head"]  # Labels to extract
+        start_index = next((i for i, line in enumerate(data) if "Rigid Bodies" in line), None)
+        
+        if start_index is not None:
+            i = start_index + 1  # Start after the "Rigid Bodies" line
+            while i < len(data) and "----------" not in data[i]:  # End at the next separator
+                line = data[i].strip()
+                if any(label in line for label in body_labels):
+                    label = line.split('[')[0].strip()
+                    body_id = int(line.split('[ID=')[1].split(' ')[0])
+                    error = float(line.split('Error(mm)=')[1].split(' ')[0])
+                    tracked = int(line.split('Tracked=')[1].strip(']'))
+                    
+                    position_line = data[i + 2].strip()  # Position and orientation data line
+                    pos_q = position_line.split()
+                    position = list(map(float, pos_q[:3]))
+                    orientation = list(map(float, pos_q[3:]))
+                    
+                    rigid_bodies[label] = {
+                        "body_id": body_id,
+                        "error": error,
+                        "tracked": tracked,
+                        "position": position,
+                        "orientation": orientation
+                    }
+                i += 3  # Move to the next rigid body entry (skipping position and orientation lines)
+        
+        return rigid_bodies
+
+    
     def extract_labeled_markers(self, data):
         labeled_markers = {}
         for line in data:
@@ -173,11 +206,13 @@ if __name__ == "__main__":
     masses = 70 * masses / masses.sum()
     total_mass = masses.sum()
     # masses = 1
-    
+    xxxx
     time.sleep(1)
     
+    
+    
     while True:
-        
+        # continue
         # xm = motive.get_last()['labeled_markers']
         
         try:
