@@ -604,6 +604,11 @@ time.sleep(0.5)
 init_drawing = True
 
 
+xm = motive.get_last()['labeled_markers']
+coord_array = np.array(list(xm.values()))
+
+color_vec = torch.rand(coord_array.shape[0],3).cuda()*10
+
 
 
 idx_embed_mod = 0
@@ -755,40 +760,24 @@ while True:
                 print("capture card fail!")
         elif do_drawing:
             if init_drawing:
-                
                 sz_drawing = [300,600,3]
                 
-                canvas = np.zeros(sz_drawing, dtype=np.float32)
-                draw_pos_y = canvas.shape[0]//2
-                draw_pos_x = canvas.shape[1]//2
+                canvas = torch.zeros(sz_drawing, device=latents.device)
+                # draw_pos_y = canvas.shape[0]//2
+                # draw_pos_x = canvas.shape[1]//2
                 init_drawing = False
     
-                # Function to create a circular mask and color gradient
-                def create_circular_mask_and_color(h, w, center=None, radius=None, hue=0.5, max_intensity=10):
-                    if center is None:  # Use the middle of the image
-                        center = (int(w/2), int(h/2))
-                    if radius is None:  # Use the smallest distance between the center and image walls
-                        radius = min(center[0], center[1], w-center[0], h-center[1])
-    
-                    Y, X = np.ogrid[:h, :w]
-                    dist_from_center = np.sqrt((X - center[1])**2 + (Y - center[0])**2)
-    
-                    mask = dist_from_center <= radius
-                    normalized_dist = dist_from_center / radius  # Normalized distance within the mask
-    
-                    # Lightness and saturation
-                    lightness = 1 - normalized_dist * 0.5  # Lightness drops to 0.5 at the edge
-                    saturation = np.ones_like(lightness)  # Full saturation
-    
-                    # Convert lightness to range suitable for HLS (0 to 1)
-                    lightness = np.clip(lightness, 0, 1)
-                    
-                    # Convert HLS to RGB using vectorization for all pixels in the mask
-                    rgb_colors = np.array([colorsys.hls_to_rgb(hue, l, s) for l, s in zip(lightness[mask], saturation[mask])])
-                    rgb_image = np.zeros((h, w, 3), dtype=np.float32)
-                    rgb_image[mask] = (rgb_colors * max_intensity)
-    
-                    return mask, rgb_image
+            def draw_circular_patch(Y,X,y,x, brush_size):
+                # Calculate the distance from the center (x, y)
+                distance = ((X - x) ** 2 + (Y - y) ** 2).float().sqrt()
+                
+                mask = distance > brush_size
+                patch = brush_size - distance
+                patch[mask] = 0
+                # distance = 1 / (distance + 1e-3)
+                # distance[distance < brush_size] = 0
+                
+                return patch                
 
             height, width = canvas.shape[:2]
             
@@ -797,42 +786,58 @@ while True:
             xm = motive.get_last()['labeled_markers']
             coord_array = np.array(list(xm.values()))
             
-            coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=1)
+            coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
             coord_offset = np.array([0,3,3])[None]
             
+            if len(coord_array) > 0:
             # invert Y axis
-            coord_array[:,1] = -coord_array[:,1]
-            coord_array += coord_offset
-            coord_array[coord_array < 0] = 0
-            
-            coord_array *= coord_scale
-            coord_array = coord_array.astype(np.int32)
-            
-            coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
-            coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
-            
-            # Mask parameters
-            mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
-            constant_hue = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0)
-            
-            mask_radius = midi_input.get("E2", val_min=1, val_max=20, val_default=1)
-
-            # erase
-            # canvas[:] = 0
-            
-            # decay canvas
-            canvas = canvas * 0.7
-            for coord in coord_array:
-                # Create the mask and colors
-                mask, colors = create_circular_mask_and_color(height, width, center=(coord[1], coord[2]), 
-                                                              radius=mask_radius, hue=constant_hue, max_intensity=100)
+                coord_array[:,1] = -coord_array[:,1]
+                coord_array += coord_offset
+                coord_array[coord_array < 0] = 0
+                
+                coord_array *= coord_scale
+                coord_array = coord_array.astype(np.int32)
+                
+                coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
+                coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
+                
+                # Mask parameters
+                mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
+                # constant_hue = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0)
+                
+                mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
     
-                # Add the color gradient to the image
-                canvas += colors
+                # erase
+                # canvas[:] = 0
+                
+                # decay canvas
+                decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
+                canvas = canvas * decay_rate
+                # canvas[:] = 0
+                
+                # Create a grid of coordinates
+                Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
+                X = X.float()
+                Y = Y.float()
+                
+                # color_vec = torch.zeros((1,1,3), device=latents.device)
+                # color_vec[0,0,:] = torch.rand(3).cuda()*10
+                # print(f'color_vec {color_vec}')
+                
+                for idx, coord in enumerate(coord_array):
+                    # marker drop
+                    if idx < color_vec.shape[0]:
+                        colors = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius).unsqueeze(2)*color_vec[idx][None][None]*10
+        
+                    # Add the color gradient to the image
+                    canvas += colors
+            else:
+                print('cant see markers')
 
             # Ensure values remain within the 0-255 range after addition
-            canvas = np.clip(canvas, 0, 255)
-            img_drive = canvas.astype(np.uint8)
+            img_drive = canvas.cpu().numpy()
+            img_drive = np.clip(img_drive, 0, 255)
+            img_drive = img_drive.astype(np.uint8)
                 
         else:
             # speed_movie += int(av_router.get_modulation('acid'))
