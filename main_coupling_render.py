@@ -604,6 +604,8 @@ embeds_mod_full = pb.get_prompt_embeds(list_embed_modifiers_prompts[idx_embed_mo
 fract_noise = 0
 fract_prompt = 0
 
+latents1 = pb.get_latents()
+latents2 = pb.get_latents()
 
 while True:
     
