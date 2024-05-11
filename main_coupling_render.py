@@ -29,10 +29,12 @@ from PIL import Image
 import os
 import cv2
 import matplotlib.pyplot as plt
+import colorsys
 import torch.nn.functional as F
 from image_processing import multi_match_gpu
+from util_motive_receiver import MarkerTracker
 #%% VARS
-use_compiled_model = True
+use_compiled_model = False
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -512,6 +514,41 @@ list_fp_movies = ['bangbang_dance_interp_mflow','blue_dancer_interp_mflow',
 fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
 movie_reader = MovieReaderCustom(fp_movie)
 
+#%% decoder embedding mixing
+
+list_embed_modifiers_prompts = ["dramatic", "black and white", "metallic", "color explosion", "wood", 
+    "stone", "abstract", "rusty", "bright", "high contrast", "neon", "surreal",
+    "minimalistic", "vintage", "futuristic",  "glossy",
+    "matte finish", "psychedelic", "gritty", "ethereal", "soft focus", "glowing",
+    "shadowy", "muted colors", "saturated", "dusty", "crystalline", "film noir",
+    "steampunk", "monochrome",  "holographic", "textured",
+    "velvet", "mirror", "blurry", "geometric", "mosaic", "oil-painted",
+    "watercolor", "charcoal sketch", "pen and ink", "silhouetted",
+    "thermal imaging", "acidic", "noir",
+    "zen", "chaotic", "floral", "urban decay", "oceanic", "space", "cyberpunk",
+    "tropical", "antique", "radiant", "ghostly", "disco",
+    "medieval",  "glitch", "pop art", "frosted",
+    "chiaroscuro", "apocalyptic", "heavenly", "infernal", "submerged",
+    "jewel-toned", "bioluminescent", "lace", "bejeweled",
+    "enamel", "tattooed", "cobwebbed", "granular", "rippled", "pixelated",
+    "collage", "marbled", "fluffy", "frozen"
+]
+
+nmb_embed_modifiers = 5
+selected_modifiers = random.sample(list_embed_modifiers_prompts, nmb_embed_modifiers)
+selected_embeds = [pb.get_prompt_embeds(modifier) for modifier in selected_modifiers]
+
+
+def compute_mixed_embed(selected_embeds, weights):
+    embeds_mod_full = []
+    for i in range(4):
+        for j in range(len(weights)):
+            if j==0:
+                emb = selected_embeds[j][i] * weights[j]
+            else:
+                emb += selected_embeds[j][i] * weights[j]
+        embeds_mod_full.append(emb)
+    return embeds_mod_full
 
 #%%#
 noodle_machine = NoodleMachine()
@@ -519,11 +556,15 @@ noodle_machine = NoodleMachine()
 negative_prompt = "blurry, lowres, disfigured"
 space_prompt = prompt_holder.prompt_spaces[prompt_holder.active_space][0]
 
+space_prompt = 'person outline made of of sparking and trippy stars and nebula' 
+space_prompt = 'person body drawn with trippy outlines and tracer colorful lines' 
+
 # Run space
 idx_cycle = 0
 pb.set_prompt1(space_prompt, negative_prompt)
 pb.set_prompt2(space_prompt, negative_prompt)
 latents2 = pb.get_latents()
+latents1 = pb.get_latents()
 
 
 modulations = {}
@@ -558,44 +599,12 @@ noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 # noodle_machine.create_noodle(['DJHIGH','H0'], 'hue_rot_mix', lambda x: 100*x[0]*x[1])
 # noodle_machine.create_noodle(['/test'], 'osc_zoom')
 
-
-
-img_noise_drive = np.random.randint(0, 255, (720, 1280, 3)).astype(np.uint8)
-
-list_embed_modifiers_prompts = ["dramatic", "black and white", "metallic", "color explosion", "wood", 
-    "stone", "abstract", "rusty", "bright", "high contrast", "neon", "surreal",
-    "minimalistic", "vintage", "futuristic",  "glossy",
-    "matte finish", "psychedelic", "gritty", "ethereal", "soft focus", "glowing",
-    "shadowy", "muted colors", "saturated", "dusty", "crystalline", "film noir",
-    "steampunk", "monochrome",  "holographic", "textured",
-    "velvet", "mirror", "blurry", "geometric", "mosaic", "oil-painted",
-    "watercolor", "charcoal sketch", "pen and ink", "silhouetted",
-    "thermal imaging", "acidic", "noir",
-    "zen", "chaotic", "floral", "urban decay", "oceanic", "space", "cyberpunk",
-    "tropical", "antique", "radiant", "ghostly", "disco",
-    "medieval",  "glitch", "pop art", "frosted",
-    "chiaroscuro", "apocalyptic", "heavenly", "infernal", "submerged",
-    "jewel-toned", "bioluminescent", "lace", "bejeweled",
-    "enamel", "tattooed", "cobwebbed", "granular", "rippled", "pixelated",
-    "collage", "marbled", "fluffy", "frozen"
-]
-
-nmb_embed_modifiers = 5
-selected_modifiers = random.sample(list_embed_modifiers_prompts, nmb_embed_modifiers)
-selected_embeds = [pb.get_prompt_embeds(modifier) for modifier in selected_modifiers]
+motive = MarkerTracker('192.168.50.64')
+time.sleep(0.5)
+init_drawing = True
 
 
 
-def compute_mixed_embed(selected_embeds, weights):
-    embeds_mod_full = []
-    for i in range(4):
-        for j in range(len(weights)):
-            if j==0:
-                emb = selected_embeds[j][i] * weights[j]
-            else:
-                emb += selected_embeds[j][i] * weights[j]
-        embeds_mod_full.append(emb)
-    return embeds_mod_full
 
 idx_embed_mod = 0
 embeds_mod_full = pb.get_prompt_embeds(list_embed_modifiers_prompts[idx_embed_mod])
@@ -604,9 +613,9 @@ embeds_mod_full = pb.get_prompt_embeds(list_embed_modifiers_prompts[idx_embed_mo
 fract_noise = 0
 fract_prompt = 0
 
+coords = np.zeros(3)
 
 while True:
-    
     if fract_noise >= 1:
         # cycle back from target to source
         fract_noise = 0
@@ -709,6 +718,7 @@ while True:
     color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
     zoom_factor = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=1)
     do_debug_verlay = midi_input.get("H3", button_mode="toggle")
+    do_drawing = midi_input.get("E3", button_mode="toggle")
     
     diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
     diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
@@ -743,6 +753,87 @@ while True:
                 img_drive = cam.get_img()
             except Exception as e:
                 print("capture card fail!")
+        elif do_drawing:
+            if init_drawing:
+                
+                sz_drawing = [300,600,3]
+                
+                canvas = np.zeros(sz_drawing, dtype=np.float32)
+                draw_pos_y = canvas.shape[0]//2
+                draw_pos_x = canvas.shape[1]//2
+                init_drawing = False
+    
+                # Function to create a circular mask and color gradient
+                def create_circular_mask_and_color(h, w, center=None, radius=None, hue=0.5, max_intensity=10):
+                    if center is None:  # Use the middle of the image
+                        center = (int(w/2), int(h/2))
+                    if radius is None:  # Use the smallest distance between the center and image walls
+                        radius = min(center[0], center[1], w-center[0], h-center[1])
+    
+                    Y, X = np.ogrid[:h, :w]
+                    dist_from_center = np.sqrt((X - center[1])**2 + (Y - center[0])**2)
+    
+                    mask = dist_from_center <= radius
+                    normalized_dist = dist_from_center / radius  # Normalized distance within the mask
+    
+                    # Lightness and saturation
+                    lightness = 1 - normalized_dist * 0.5  # Lightness drops to 0.5 at the edge
+                    saturation = np.ones_like(lightness)  # Full saturation
+    
+                    # Convert lightness to range suitable for HLS (0 to 1)
+                    lightness = np.clip(lightness, 0, 1)
+                    
+                    # Convert HLS to RGB using vectorization for all pixels in the mask
+                    rgb_colors = np.array([colorsys.hls_to_rgb(hue, l, s) for l, s in zip(lightness[mask], saturation[mask])])
+                    rgb_image = np.zeros((h, w, 3), dtype=np.float32)
+                    rgb_image[mask] = (rgb_colors * max_intensity)
+    
+                    return mask, rgb_image
+
+            height, width = canvas.shape[:2]
+            
+            # 64 ms for 39 markers
+            # coordinate test run
+            xm = motive.get_last()['labeled_markers']
+            coord_array = np.array(list(xm.values()))
+            
+            coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=1)
+            coord_offset = np.array([0,3,3])[None]
+            
+            # invert Y axis
+            coord_array[:,1] = -coord_array[:,1]
+            coord_array += coord_offset
+            coord_array[coord_array < 0] = 0
+            
+            coord_array *= coord_scale
+            coord_array = coord_array.astype(np.int32)
+            
+            coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
+            coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
+            
+            # Mask parameters
+            mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
+            constant_hue = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0)
+            
+            mask_radius = midi_input.get("E2", val_min=1, val_max=20, val_default=1)
+
+            # erase
+            # canvas[:] = 0
+            
+            # decay canvas
+            canvas = canvas * 0.7
+            for coord in coord_array:
+                # Create the mask and colors
+                mask, colors = create_circular_mask_and_color(height, width, center=(coord[1], coord[2]), 
+                                                              radius=mask_radius, hue=constant_hue, max_intensity=100)
+    
+                # Add the color gradient to the image
+                canvas += colors
+
+            # Ensure values remain within the 0-255 range after addition
+            canvas = np.clip(canvas, 0, 255)
+            img_drive = canvas.astype(np.uint8)
+                
         else:
             # speed_movie += int(av_router.get_modulation('acid'))
             # print(f'speedmovie {speed_movie} {av_router.get_modulation("acid")}')
