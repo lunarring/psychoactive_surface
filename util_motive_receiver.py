@@ -260,6 +260,8 @@ if __name__ == "__main__":
         # positions = coords
         list_positions.append(positions.copy()*1000)
         
+        time.sleep(0.01)
+        
         print(f"positions {positions}")
         
         if len(list_positions) > 2:

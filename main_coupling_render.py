@@ -34,7 +34,7 @@ import torch.nn.functional as F
 from image_processing import multi_match_gpu
 from util_motive_receiver import MarkerTracker
 #%% VARS
-use_compiled_model = False
+use_compiled_model = True
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -607,7 +607,7 @@ init_drawing = True
 xm = motive.get_last()['labeled_markers']
 coord_array = np.array(list(xm.values()))
 
-color_vec = torch.rand(coord_array.shape[0],3).cuda()*10
+color_vec = torch.rand(coord_array.shape[0],3).cuda()*100
 
 
 
@@ -745,7 +745,10 @@ while True:
         # embeds_mod_full = pb.get_prompt_embeds(prompt_embed_modifier)
         # print(f"new embed modifier: {prompt_embed_modifier} idx {idx_embed_mod}")
     
-    
+    mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
+    decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
+    coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
+    drawing_intensity = midi_input.get("D2", val_min=1, val_max=15, val_default=10)
     
     if use_image2image:
         kwargs['num_inference_steps'] = 2
@@ -765,6 +768,7 @@ while True:
                 sz_drawing = [300,600,3]
                 
                 canvas = torch.zeros(sz_drawing, device=latents.device)
+                noise_patch = torch.rand(sz_drawing, device=latents.device)
                 # draw_pos_y = canvas.shape[0]//2
                 # draw_pos_x = canvas.shape[1]//2
                 init_drawing = False
@@ -785,10 +789,17 @@ while True:
             
             # 64 ms for 39 markers
             # coordinate test run
+            
+            
             xm = motive.get_last()['labeled_markers']
             coord_array = np.array(list(xm.values()))
+
+            # rigid body positions
+            # xm = motive.get_last()['rigid_bodies']
+            # coord_array = np.array([v['position'] for v in xm.values()])
             
-            coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
+            
+            # coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
             coord_offset = np.array([0,3,3])[None]
             
             if len(coord_array) > 0:
@@ -804,16 +815,16 @@ while True:
                 coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
                 
                 # Mask parameters
-                mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
+                # mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
                 # constant_hue = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0)
                 
-                mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
+                # mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
     
                 # erase
                 # canvas[:] = 0
                 
                 # decay canvas
-                decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
+                # decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
                 canvas = canvas * decay_rate
                 # canvas[:] = 0
                 
@@ -829,10 +840,12 @@ while True:
                 for idx, coord in enumerate(coord_array):
                     # marker drop
                     if idx < color_vec.shape[0]:
-                        colors = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius).unsqueeze(2)*color_vec[idx][None][None]*10
+                        colors = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius).unsqueeze(2)*noise_patch*color_vec[idx][None][None]
         
                     # Add the color gradient to the image
-                    canvas += colors
+                    canvas += colors * drawing_intensity
+                    
+                canvas = torch.roll(canvas, 2, dims=[0]1)
             else:
                 print('cant see markers')
 
