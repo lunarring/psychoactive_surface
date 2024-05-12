@@ -34,7 +34,7 @@ import torch.nn.functional as F
 from image_processing import multi_match_gpu
 from util_motive_receiver import MarkerTracker
 #%% VARS
-use_compiled_model = False
+use_compiled_model = True
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -589,7 +589,7 @@ noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
 t_last = time.time()
 
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
-effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot']
+effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot', 'zoom_factor']
 
 noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
 noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
@@ -604,10 +604,11 @@ time.sleep(0.5)
 init_drawing = True
 
 
-xm = motive.get_last()['labeled_markers']
-coord_array = np.array(list(xm.values()))
 
-color_vec = torch.rand(coord_array.shape[0],3).cuda()*10
+# xm = motive.get_last()['labeled_markers']
+# coord_array = np.array(list(xm.values()))
+
+# color_vec = torch.rand(coord_array.shape[0],3).cuda()*100
 
 
 
@@ -723,7 +724,16 @@ while True:
     
     image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0.5)
     color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
-    zoom_factor = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=1)
+    
+    zoom_factor_base = midi_input.get("F1", val_min=0, val_max=1, val_default=1)
+    zoom_factor_gain = midi_input.get("B2", val_min=0, val_max=1, val_default=1)
+    try:
+        zoom_factor_mod = noodle_machine.get_effect('zoom_factor_mod')
+    except:
+        zoom_factor_mod = 0
+    
+    zoom_factor = 0.8 + 0.4*(zoom_factor_base + zoom_factor_gain * zoom_factor_mod)
+    
     do_debug_verlay = midi_input.get("H3", button_mode="toggle")
     do_drawing = midi_input.get("E3", button_mode="toggle")
     
@@ -732,6 +742,7 @@ while True:
     
     mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
     mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
+    
     
     get_new_embed_modifier = midi_input.get("B4", button_mode="released_once")
     
@@ -745,7 +756,10 @@ while True:
         # embeds_mod_full = pb.get_prompt_embeds(prompt_embed_modifier)
         # print(f"new embed modifier: {prompt_embed_modifier} idx {idx_embed_mod}")
     
-    
+    mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
+    decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
+    coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
+    drawing_intensity = midi_input.get("D2", val_min=1, val_max=15, val_default=10)
     
     if use_image2image:
         kwargs['num_inference_steps'] = 2
@@ -765,6 +779,7 @@ while True:
                 sz_drawing = [300,600,3]
                 
                 canvas = torch.zeros(sz_drawing, device=latents.device)
+                noise_patch = torch.rand(sz_drawing, device=latents.device)
                 # draw_pos_y = canvas.shape[0]//2
                 # draw_pos_x = canvas.shape[1]//2
                 init_drawing = False
@@ -785,10 +800,17 @@ while True:
             
             # 64 ms for 39 markers
             # coordinate test run
+            
+            
             xm = motive.get_last()['labeled_markers']
             coord_array = np.array(list(xm.values()))
+
+            # rigid body positions
+            # xm = motive.get_last()['rigid_bodies']
+            # coord_array = np.array([v['position'] for v in xm.values()])
             
-            coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
+            
+            # coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
             coord_offset = np.array([0,3,3])[None]
             
             if len(coord_array) > 0:
@@ -804,16 +826,16 @@ while True:
                 coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
                 
                 # Mask parameters
-                mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
+                # mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
                 # constant_hue = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0)
                 
-                mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
+                # mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
     
                 # erase
                 # canvas[:] = 0
                 
                 # decay canvas
-                decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
+                # decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
                 canvas = canvas * decay_rate
                 # canvas[:] = 0
                 
@@ -829,10 +851,12 @@ while True:
                 for idx, coord in enumerate(coord_array):
                     # marker drop
                     if idx < color_vec.shape[0]:
-                        colors = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius).unsqueeze(2)*color_vec[idx][None][None]*10
+                        colors = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius).unsqueeze(2)*noise_patch*color_vec[idx][None][None]
         
                     # Add the color gradient to the image
-                    canvas += colors
+                    canvas += colors * drawing_intensity
+                    
+                canvas = torch.roll(canvas, 2, dims=[0])
             else:
                 print('cant see markers')
 
@@ -904,7 +928,9 @@ while True:
     img_mix = np.array(img_mix)
     prev_diffusion_output = img_mix.astype(np.float32)
     
+
     hue_rot_mod = noodle_machine.get_effect('hue_rot_mod')
+
     hue_rot_gain = midi_input.get("H0", val_min=0, val_max=1, val_default=0)
     
     hue_rot = 100 * hue_rot_gain * hue_rot_mod
