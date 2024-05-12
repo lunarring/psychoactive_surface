@@ -32,9 +32,9 @@ import matplotlib.pyplot as plt
 import colorsys
 import torch.nn.functional as F
 from image_processing import multi_match_gpu
-from util_motive_receiver import MarkerTracker
+from util_motive_receiver import MarkerTracker, RigidBody
 #%% VARS
-use_compiled_model = True
+use_compiled_model = False
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -239,6 +239,7 @@ def get_sample_shape_unet(coord):
 def get_noise_for_modulations(shape):
     return torch.randn(shape, device=pipe_text2img.device, generator=torch.Generator(device=pipe_text2img.device).manual_seed(1)).half()
 
+#%%
 
 class NoodleMachine():
     
@@ -246,8 +247,10 @@ class NoodleMachine():
         self.causes= {}
         self.effect2causes = {}
         self.effect2functs = {}
+        self.dict_cause_min = {}
+        self.dict_cause_max = {}
     
-    def create_noodle(self, cause_names, effect_name, func=np.prod):
+    def create_noodle(self, cause_names, effect_name, func=np.prod, do_auto_scale=True):
         if type(cause_names) == str:
             cause_names = [cause_names]
         assert hasattr(cause_names, '__getitem__')
@@ -259,12 +262,33 @@ class NoodleMachine():
         for cause_name in cause_names:
             if cause_name not in self.causes.keys():
                 self.causes[cause_name] = None
+            if do_auto_scale:
+                self.dict_cause_max[cause_name] = None
+                self.dict_cause_min[cause_name] = None
             
     def set_cause(self, cause_name, cause_value, must_exist=False):
         if cause_name in self.causes.keys():
-            self.causes[cause_name] = cause_value
+            if cause_name in self.dict_cause_max.keys():
+                if self.dict_cause_max[cause_name] is None or cause_value > self.dict_cause_max[cause_name]:
+                    self.dict_cause_max[cause_name] = cause_value
+                if self.dict_cause_min[cause_name] is None or cause_value < self.dict_cause_min[cause_name]:
+                    self.dict_cause_min[cause_name] = cause_value
+                if self.dict_cause_max[cause_name] is not None and self.dict_cause_min[cause_name] is not None:
+                    if self.dict_cause_max[cause_name] == self.dict_cause_min[cause_name]:
+                        self.causes[cause_name] = 0.5
+                    else:
+                        self.causes[cause_name] = (cause_value - self.dict_cause_min[cause_name])/(self.dict_cause_max[cause_name]-self.dict_cause_min[cause_name])
+                else:
+                    self.causes[cause_name] = cause_value
+            else:
+                self.causes[cause_name] = cause_value
         elif must_exist:
             raise ValueError(f'cause {cause_name} not known')
+            
+    def reset_range(self, cause_name):
+        if cause_name in self.dict_cause_max:
+            self.dict_cause_max[cause_name] = None
+            self.dict_cause_min[cause_name] = None
 
     def get_effect(self, effect_name):
         if effect_name not in self.effect2causes.keys():
@@ -279,7 +303,7 @@ class NoodleMachine():
             cause_values.append(self.causes[cause_name])
         return self.effect2functs[effect_name](cause_values)
                 
-
+#%%
 
 class PromptHolder():
     def __init__(self, prompt_blender, size_img_tiles_hw, use_image2image=False):
@@ -591,15 +615,36 @@ t_last = time.time()
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot', 'zoom_factor']
 
-noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
-noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
-noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
-# noodle_machine.create_noodle(['DJMID', 'H1', 'G1'], 'diffusion_noise', lambda x: 255*x[0]*x[1]+x[2])
-# noodle_machine.create_noodle(['DJLOW','H2','G2'], 'alpha_acid', lambda x: 10*x[0]*x[1]+x[2])
-# noodle_machine.create_noodle(['DJHIGH','H0'], 'hue_rot_mix', lambda x: 100*x[0]*x[1])
-# noodle_machine.create_noodle(['/test'], 'osc_zoom')
+motion_feature_names = ['total_kinetic_energy', 'left_hand_y', 'right_hand_y', 'center_velocity']
 
+## sound coupling
+# noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
+# noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
+# noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
+
+
+noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
+noodle_machine.create_noodle(['right_hand_y'], 'd_fract_noise_mod')
+noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
+
+# noodle_machine.create_noodle('DJLOW', 'd_fract_noise_mod')
+noodle_machine.create_noodle('total_kinetic_energy', 'd_fract_prompt_mod')
+# noodle_machine.create_noodle('total_kinetic_energy', 'mem_acid_mod')
+
+
+
+# TRACKING SYSTEM
 motive = MarkerTracker('192.168.50.64')
+
+right_hand = RigidBody(motive, "right_hand")
+left_hand = RigidBody(motive, "left_hand")
+center = RigidBody(motive, "center")
+head = RigidBody(motive, "head")
+right_foot = RigidBody(motive, "right_foot")
+left_foot = RigidBody(motive, "left_foot")
+
+list_body_parts = [right_hand, left_hand, right_foot, left_foot, head, center]
+
 time.sleep(0.5)
 init_drawing = True
 
@@ -608,7 +653,7 @@ init_drawing = True
 # xm = motive.get_last()['labeled_markers']
 # coord_array = np.array(list(xm.values()))
 
-# color_vec = torch.rand(coord_array.shape[0],3).cuda()*100
+color_vec = torch.rand(2,3).cuda()*100
 
 
 
@@ -624,6 +669,47 @@ latents2 = pb.get_latents()
 coords = np.zeros(3)
 
 while True:
+    # MOTIVE FOR PASTA tracking first
+    right_hand.update()
+    left_hand.update()
+    right_foot.update()
+    left_foot.update()
+    center.update()
+    head.update()
+    
+    # if len(right_hand.kinetic_energies) > 0:
+    #     print(right_hand.kinetic_energies[-1])
+    
+    total_kinetic_energy = 0
+    try:
+        for part in list_body_parts:
+            total_kinetic_energy += part.kinetic_energies[-1]
+        
+        right_hand_y = right_hand.positions[-1][1]
+        left_hand_y = left_hand.positions[-1][1]
+        right_hand_x = right_hand.positions[-1][0]
+        left_hand_x = left_hand.positions[-1][0]
+        right_hand_z = right_hand.positions[-1][2]
+        left_hand_z = left_hand.positions[-1][2]
+        center_velocity = np.linalg.norm(center.velocities[-1])
+    except Exception as E:
+        print(E)
+        right_hand_y = 0
+        left_hand_y = 0
+        right_hand_x = 0
+        left_hand_x = 0
+        right_hand_z = 0
+        left_hand_z = 0
+        center_velocity = 0
+        
+    # print(f'total_kinetic_energy: {total_kinetic_energy}')
+    noodle_machine.set_cause('right_hand_y', right_hand_y)
+    noodle_machine.set_cause('total_kinetic_energy', total_kinetic_energy)
+    print(f'right_hand_y: {right_hand_y}')
+    # print(f'total_kinetic_energy: {total_kinetic_energy}')
+    
+    
+    # REST
     if fract_noise >= 1:
         # cycle back from target to source
         fract_noise = 0
@@ -683,9 +769,18 @@ while True:
             del modulations['d0_extra_embeds']
         
     
-    # d_fract = akai_midimix.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-    d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-    d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.1, val_default=0)
+    # d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+    d_fract_noise_gain = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+    d_fract_noise_mod = noodle_machine.get_effect('d_fract_noise_mod')
+        
+    d_fract_noise = d_fract_noise_mod * d_fract_noise_gain * 0.5
+    
+    
+    # d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.1, val_default=0)
+    d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=1, val_default=0)
+    # d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=0.003, val_default=0)
+    d_fract_prompt_mod = noodle_machine.get_effect('d_fract_prompt_mod')     
+    d_fract_prompt = d_fract_prompt_mod * d_fract_prompt_gain
     
     cross_attention_kwargs ={}
     cross_attention_kwargs['modulations'] = modulations        
@@ -736,6 +831,7 @@ while True:
     
     do_debug_verlay = midi_input.get("H3", button_mode="toggle")
     do_drawing = midi_input.get("E3", button_mode="toggle")
+    disable_zoom = midi_input.get("H4", button_mode="toggle")
     
     diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
     diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
@@ -802,8 +898,9 @@ while True:
             # coordinate test run
             
             
-            xm = motive.get_last()['labeled_markers']
-            coord_array = np.array(list(xm.values()))
+            # xm = motive.get_last()['labeled_markers']
+            # coord_array = np.array(list(xm.values()))
+            coord_array = np.array([[left_hand_x, left_hand_y, left_hand_z], [right_hand_x, right_hand_y, right_hand_z]])
 
             # rigid body positions
             # xm = motive.get_last()['rigid_bodies']
@@ -885,6 +982,8 @@ while True:
         # diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
         # diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
         
+        print(f'diffusion_noise_mod {diffusion_noise_mod}')
+        
         diffusion_noise = 1 * (diffusion_noise_base + diffusion_noise_gain*diffusion_noise_mod)
         
         image_init = image_init.astype(np.float32)
@@ -897,11 +996,14 @@ while True:
         mem_acid_mod = noodle_machine.get_effect('mem_acid_mod')
         
         mem_acid = mem_acid_base + mem_acid_gain * mem_acid_mod
+        if mem_acid > 1:
+            mem_acid = 1
+        print(f'mem_acid {mem_acid}')
 
         if prev_diffusion_output is not None:
             prev_diffusion_output = np.array(prev_diffusion_output)
             prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
-            if zoom_factor != 1:
+            if zoom_factor != 1 and not disable_zoom:
                 prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe_img2img.device)
                 prev_diffusion_output = zoom_image_torch(prev_diffusion_output, zoom_factor)
                 prev_diffusion_output = prev_diffusion_output.cpu().numpy()
@@ -926,6 +1028,9 @@ while True:
 
     # save the previous diffusion output
     img_mix = np.array(img_mix)
+    
+    
+    
     prev_diffusion_output = img_mix.astype(np.float32)
     
 

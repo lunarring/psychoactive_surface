@@ -20,7 +20,8 @@ class MarkerTracker:
         self.sleep_time = 0.000001
         self.list_raw_packets = []
         self.list_dict_packets = []
-        self.rigid_body_labels = ["left_hand", "right_hand", "head", "center", "right_foot", "left_foot"] 
+        self.rigid_body_labels = ["left_hand", "right_hand", "head", "center", "right_foot", "left_foot"]
+        # self.rigid_body_positions = {label:[] for label in self.rigid_body_labels}
         if start_process:
             self.start_process()
 
@@ -77,6 +78,8 @@ class MarkerTracker:
                 self.process_packet(packet_content)
             else:
                 packet_content.append(output)
+                
+            
                 
             # # if 'Timestamp :' in output:
             # #     self.list_raw_frames.append(output)
@@ -151,6 +154,7 @@ class MarkerTracker:
                         "position": position,
                         "orientation": orientation
                     }
+                    # self.rigid_body_positions[label].append(position)
                 i += 3  # Move to the next rigid body entry (skipping position and orientation lines)
         
         return rigid_bodies
@@ -240,10 +244,51 @@ class MarkerTracker:
             if label is None:
                 return self.list_dict_packets[-1]
             else:
-                if label in motive.list_dict_packets[-1].keys():
+                if label in self.list_dict_packets[-1].keys():
                     return self.list_dict_packets[-1][label]
                 else:
                     return None
+                
+    def get_mean(self, label=0, mean_samples=1):
+        if len(self.list_dict_packets) < mean_samples:
+            return None
+        else:
+            if label is None:
+                return self.list_dict_packets[-mean_samples -1:-1].mean()
+            else:
+                if label in self.list_dict_packets[-1].keys():
+                    
+                    return self.list_dict_packets[-mean_samples-1:-1][label].mean()
+                else:
+                    return None
+
+    def get_at_index(self, index, label=None):
+        if index < 0 or index >= len(self.list_dict_packets):
+            return None
+        else:
+            if label is None:
+                return self.list_dict_packets[index]
+            else:
+                if label in self.list_dict_packets[index].keys():
+                    return self.list_dict_packets[index][label]
+                else:
+                    return None
+
+    def get_range(self, start_index, end_index, label=None):
+        if start_index < 0 or end_index >= len(self.list_dict_packets) or start_index > end_index:
+            return None
+        else:
+            range_data = self.list_dict_packets[start_index:end_index + 1]
+            if label is not None:
+                mean_data = np.mean([packet[label] for packet in range_data if label in packet.keys()], axis=0)
+                return mean_data
+            
+            if label is None:
+                return range_data
+            else:
+                filtered_data = [packet[label] for packet in range_data if label in packet.keys()]
+                return filtered_data if filtered_data else None
+
 
 
 class RigidBody:
@@ -258,10 +303,24 @@ class RigidBody:
         self.forces = []
         self.kinetic_energies = []
         self.mass = mass
+        self.pos = None
         self.buffer_size = 1000  # Define the buffer size for positions, velocities, accelerations, forces, and kinetic energies
 
-    def update(self):
-        rigid_bodies_data = self.motive.get_last("rigid_bodies")
+    def updatexxx(self):
+        try:
+            self.pos = self.motive.list_dict_packets[-1]['rigid_bodies'][self.label]['position']
+        except Exception as e:
+            pass
+        
+
+    def update(self, mean_samples=1):
+        
+        if mean_samples == 1:
+            rigid_bodies_data = self.motive.get_last("rigid_bodies")
+        else:
+            rigid_bodies_data = self.motive.get_mean("rigid_bodies", mean_samples)
+            
+            
         if rigid_bodies_data is None:
             return
         if self.label in rigid_bodies_data.keys():
@@ -346,13 +405,14 @@ if __name__ == "__main__":
     
     
     right_hand = RigidBody(motive, "right_hand")
+    left_foot = RigidBody(motive, "left_foot")
     # left_hand = RigidBody(motive, "left_hand")
     
     while True:
         time.sleep(0.1)
         right_hand.update()
-        if len(right_hand.kinetic_energies) > 0:
-            print(right_hand.kinetic_energies[-1])
+        left_foot.update()
+        print(right_hand.pos)
         
         
     #     left_hand.update()
