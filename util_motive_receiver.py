@@ -242,80 +242,106 @@ if __name__ == "__main__":
     list_positions = []
     list_velocities = []
     maxlen = 1e6
-    masses = 1
+    masses = 1e3
     time.sleep(1)
+    
+    xm = motive.get_last()['labeled_markers']
+    positions = np.array(list(xm.values()))
+    nmb_markers = positions.shape[0]
+    
+    params_rigid_bodies = motive.get_last()['rigid_bodies']
+    
+    dict_list_positions = {}
+    dict_list_velocities = {}
+    dict_list_kinetic_energies = {}       
+    dict_masses = {}
+    
+    rigid_body_labels = params_rigid_bodies.keys()
+    for body_label in rigid_body_labels:
+        dict_list_positions[body_label] = []
+        dict_list_velocities[body_label] = []    
+    
+        
+    marker_ids = []
     
     while True:
         # continue
         # xm = np.array(list(motive.get_last()['rigid_bodies'].values())))
-        xm = motive.get_last()['unlabeled_markers']
-        # print(f'xm {xm}')
-        # positions = np.array([v['positions'] for v in xm.values()])
-        positions = np.array(list(xm.values()))
+        xm = motive.get_last()['labeled_markers']
         
-        masses = np.abs(np.random.randn(len(positions),1))
-        masses = 70 * masses / masses.sum()
-        total_mass = masses.sum()
+        marker_ids = list(xm.keys())
         
-        # positions = coords
-        list_positions.append(positions.copy()*1000)
+        params_rigid_bodies = motive.get_last()['rigid_bodies']
         
-        print(f"positions {positions}")
-        
-        if len(list_positions) > 2:
-            velocities = list_positions[-1] - list_positions[-2]
-            list_velocities.append(velocities)
-            if len(list_velocities) > 2:
-                accelerations = list_velocities[-1] - list_velocities[-2]
-                forces = masses * accelerations
-                center_of_mass = np.average(positions, axis=0, weights=masses[:,0])
-                # center_of_mass = np.average(positions, axis=0)
-                potential_energy = center_of_mass * total_mass # check xy
-                rel_positions = positions - center_of_mass
-                momenta = masses * velocities
-                angular_momenta = np.cross(rel_positions, momenta) # gives scales for 2D!
-                total_angular_momentum = angular_momenta.sum(axis=0)
-                
-                kinetic_energies = 0.5 * masses * np.linalg.norm(velocities, axis=1)**2
-                total_kinetic_energy = kinetic_energies.sum(axis=0)
-                
-                print(f"positions {positions}")
-                print(f"total_kinetic_energy {total_kinetic_energy}")
-                
-                hgfhgf
-            
         # do rigid body by rigid body computation
-        if False:
-            rigid_body_labels = params_rigid_bodies.keys()
+        if True:
+            
             for idx, body_label in enumerate(rigid_body_labels):
                 positions = np.array(params_rigid_bodies[body_label]['position'])
                 
                 # positions = coords
                 dict_list_positions[body_label].append(positions)
-                try: 
+                if len(dict_list_positions[body_label]) > 2:
                     velocities = dict_list_positions[body_label][-1] - dict_list_positions[body_label][-2]
-                except:
-                    velocities = positions * 0
-                dict_list_velocities[body_label].append(velocities)
-                try:
-                    accelerations = dict_list_velocities[body_label][-1] - dict_list_velocities[body_label][-2]
-                except:
-                    accelerations = velocities * 0
+                    dict_list_velocities[body_label].append(velocities)
+                    if len(dict_list_velocities[body_label]) > 2:
+                        accelerations = dict_list_velocities[body_label][-1] - dict_list_velocities[body_label][-2]
+                        
+                    # forces = masses * accelerations
+                    # center_of_mass = np.average(positions, axis=0, weights=masses[:,0])
+                    # center_of_mass = np.average(positions, axis=0)
+                    # potential_energy = center_of_mass * total_mass # check xy
+                    # rel_positions = positions - center_of_mass
+                    # momenta = masses * velocities
+                    # angular_momenta = np.cross(rel_positions, momenta) # gives scales for 2D!
+                    # total_angular_momentum = angular_momenta.sum(axis=0)
                     
-                # forces = masses * accelerations
-                # center_of_mass = np.average(positions, axis=0, weights=masses[:,0])
-                # center_of_mass = np.average(positions, axis=0)
-                # potential_energy = center_of_mass * total_mass # check xy
-                # rel_positions = positions - center_of_mass
-                # momenta = masses * velocities
-                # angular_momenta = np.cross(rel_positions, momenta) # gives scales for 2D!
-                # total_angular_momentum = angular_momenta.sum(axis=0)
-                
-                kinetic_energies = 0.5 * masses[0] * np.linalg.norm(velocities)**2
-                total_kinetic_energy = kinetic_energies.sum(axis=0)
-                
-                print(f"total_kinetic_energy: {body_label} {total_kinetic_energy}")        
+                    kinetic_energies = 0.5 * masses * np.linalg.norm(velocities)**2
+                    dict_list_kinetic_energies[body_label] = kinetic_energies.sum(axis=0)
+                    
+                    # print(f'positions {positions}')
+                    print(f"total_kinetic_energy: {body_label} {dict_list_kinetic_energies[body_label]}")          
         
+        
+        
+        
+        time.sleep(0.1)
+        
+        # masses = np.abs(np.random.randn(len(positions),1))
+        # masses = 70 * masses / masses.sum()
+        # total_mass = masses.sum()
+        
+        # positions = coords
+        # list_positions.append(positions.copy())
+        
+        # for marker_id in marker_ids:
+        #     list_positions = dict_list_positions[marker_id]
+        
+        
+        # if len(list_positions) > 2:
+        #     velocities = list_positions[-1] - list_positions[-2]
+        #     list_velocities.append(velocities)
+        #     if len(list_velocities) > 2:
+        #         accelerations = list_velocities[-1] - list_velocities[-2]
+        #         forces = masses * accelerations
+        #         center_of_mass = np.average(positions, axis=0, weights=masses[:,0])
+        #         # center_of_mass = np.average(positions, axis=0)
+        #         potential_energy = center_of_mass * total_mass # check xy
+        #         rel_positions = positions - center_of_mass
+        #         momenta = masses * velocities
+        #         angular_momenta = np.cross(rel_positions, momenta) # gives scales for 2D!
+        #         total_angular_momentum = angular_momenta.sum(axis=0)
+                
+        #         kinetic_energies = 0.5 * masses * np.linalg.norm(velocities, axis=1)**2
+        #         total_kinetic_energy = kinetic_energies.sum(axis=0)
+                
+        #         # print(f"positions {positions}")
+        #         print(f"total_kinetic_energy {np.mean(total_kinetic_energy)}")
+            
+
+        
+      
+            
     
     # max_height = positions[:,1].max() - positions[:,1].min() # y extension (check!)
         
