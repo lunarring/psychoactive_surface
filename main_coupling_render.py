@@ -589,7 +589,7 @@ noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
 t_last = time.time()
 
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
-effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot']
+effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot', 'zoom_factor']
 
 noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
 noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
@@ -604,10 +604,11 @@ time.sleep(0.5)
 init_drawing = True
 
 
-xm = motive.get_last()['labeled_markers']
-coord_array = np.array(list(xm.values()))
 
-color_vec = torch.rand(coord_array.shape[0],3).cuda()*100
+# xm = motive.get_last()['labeled_markers']
+# coord_array = np.array(list(xm.values()))
+
+# color_vec = torch.rand(coord_array.shape[0],3).cuda()*100
 
 
 
@@ -723,7 +724,16 @@ while True:
     
     image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0.5)
     color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
-    zoom_factor = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=1)
+    
+    zoom_factor_base = midi_input.get("F1", val_min=0, val_max=1, val_default=1)
+    zoom_factor_gain = midi_input.get("B2", val_min=0, val_max=1, val_default=1)
+    try:
+        zoom_factor_mod = noodle_machine.get_effect('zoom_factor_mod')
+    except:
+        zoom_factor_mod = 0
+    
+    zoom_factor = 0.8 + 0.4*(zoom_factor_base + zoom_factor_gain * zoom_factor_mod)
+    
     do_debug_verlay = midi_input.get("H3", button_mode="toggle")
     do_drawing = midi_input.get("E3", button_mode="toggle")
     
@@ -732,6 +742,7 @@ while True:
     
     mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
     mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
+    
     
     get_new_embed_modifier = midi_input.get("B4", button_mode="released_once")
     
@@ -845,7 +856,7 @@ while True:
                     # Add the color gradient to the image
                     canvas += colors * drawing_intensity
                     
-                canvas = torch.roll(canvas, 2, dims=[0]1)
+                canvas = torch.roll(canvas, 2, dims=[0])
             else:
                 print('cant see markers')
 
@@ -917,7 +928,9 @@ while True:
     img_mix = np.array(img_mix)
     prev_diffusion_output = img_mix.astype(np.float32)
     
+
     hue_rot_mod = noodle_machine.get_effect('hue_rot_mod')
+
     hue_rot_gain = midi_input.get("H0", val_min=0, val_max=1, val_default=0)
     
     hue_rot = 100 * hue_rot_gain * hue_rot_mod
