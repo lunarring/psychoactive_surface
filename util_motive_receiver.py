@@ -21,6 +21,12 @@ class MarkerTracker:
         self.list_raw_packets = []
         self.list_dict_packets = []
         self.rigid_body_labels = ["left_hand", "right_hand", "head", "center", "right_foot", "left_foot"]
+        
+        # self.list_dict_unlabeled_markers = []
+        
+        self.process_list = ["unlabeled_markers"]
+        # self.process_list = ["labeled_markers", "unlabeled_markers", "rigid_bodies")
+        
         # self.rigid_body_positions = {label:[] for label in self.rigid_body_labels}
         if start_process:
             self.start_process()
@@ -104,11 +110,16 @@ class MarkerTracker:
         
         # Craete a new dict_package
         dict_package = {"frame_id" : frame_id, "timestamp" : timestamp}
-        dict_package["labeled_markers"] = self.extract_labeled_markers(data)
-        dict_package["unlabeled_markers"] = self.extract_unlabeled_markers(data)
-        dict_package["rigid_bodies"] = self.extract_rigid_bodies(data)
+        if "labeled_markers" in self.process_list:
+            dict_package["labeled_markers"] = self.extract_labeled_markers(data)
+        if "unlabeled_markers" in self.process_list:
+            dict_package["unlabeled_markers"] = self.extract_unlabeled_markers(data)
+        if "rigid_bodies" in self.process_list:
+            dict_package["rigid_bodies"] = self.extract_rigid_bodies(data)
         
         self.list_dict_packets.append(dict_package)
+        if len(self.list_dict_packets) > self.max_buffer_size:
+            self.list_dict_packets = self.list_dict_packets[-self.max_buffer_size//2:]
 
     def extract_timestamp(self, data):
         frame_id = None
@@ -403,18 +414,20 @@ if __name__ == "__main__":
     motive = MarkerTracker('192.168.50.64')
     
     
+    last_frame_id = 0
+    list_labels = []
     
-    right_hand = RigidBody(motive, "right_hand")
-    left_foot = RigidBody(motive, "left_foot")
-    # left_hand = RigidBody(motive, "left_hand")
-    
-    while True:
-        time.sleep(0.1)
-        right_hand.update()
-        left_foot.update()
-        print(right_hand.pos)
-        
-        
+    for _ in range(1000):
+        time.sleep(0.01)
+        last_package = motive.get_last()
+        if last_package is not None:
+            if last_package['frame_id'] == last_frame_id:
+                continue
+            else:
+                last_frame_id = last_package['frame_id'] 
+                print(last_frame_id)
+            
+            
     #     left_hand.update()
         
     #     print(right_hand.positions)
