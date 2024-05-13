@@ -935,7 +935,7 @@ while True:
     
     hue_rot = 100 * hue_rot_gain * hue_rot_mod
     
-    # img_mix = rotate_hue(img_mix, hue_rot)
+    img_mix = rotate_hue(img_mix, hue_rot)
     
     if do_debug_verlay and use_image2image:
         secondary_renderer.render(img_drive)
@@ -980,7 +980,6 @@ while True:
             print(f"fail of click event! {e}")
         
     fract_osc = 0
-    # fract_osc = av_router.get_modulation('diffusion_noise') # XXX
     fract_noise += d_fract_noise + fract_osc
     fract_prompt += d_fract_prompt + fract_osc
             
