@@ -11,7 +11,7 @@ import numpy as np
 os.chdir("/home/lugo/git/psychoactive_surface/")
 
 class MarkerTracker:
-    def __init__(self, ip_address, max_buffer_size=100000, start_process=True):
+    def __init__(self, ip_address, max_buffer_size=100000, start_process=True, process_list=["unlabeled_markers"]):
         self.ip_address = ip_address
         self.max_buffer_size = max_buffer_size
         self.marker_data = []
@@ -24,15 +24,130 @@ class MarkerTracker:
         
         # self.list_dict_unlabeled_markers = []
         
-        self.process_list = ["unlabeled_markers"]
-        # self.process_list = ["labeled_markers", "unlabeled_markers", "rigid_bodies")
+        self.process_list = ["rigid_bodies"]
+        self.process_list = ["rigid_bodies", "unlabeled_markers", "velocities"]
+        self.process_list = ["unlabeled_markers", "velocities"]
+        self.process_list = process_list
+        
+        self.v_last_time = 0
+        self.v_sampling_time = 0.01
+        self.last_frame_id = 0
+        self.list_labels = []
+        self.dict_label_idx = {}
+        self.set_labels = set()
+        self.list_unlabeled = []
+        self.list_timestamps = []
+        
+        self.max_nr_markers = 22
+        self.positions = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])*np.nan
+        self.velocities = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])
+        self.pos_idx = 0
+        self.last_timestamp = None
+                        
         
         # self.rigid_body_positions = {label:[] for label in self.rigid_body_labels}
         if start_process:
             self.start_process()
 
+    def compute_sq_distances(self, a, b):
+        # Calculate differences using broadcasting
+        diff = a[:, np.newaxis, :] - b[np.newaxis, :, :]
+        # Calculate squared Euclidean distances
+        dist_squared = np.sum(diff ** 2, axis=2)
+        ## Take square root to get Euclidean distances
+        # distances = np.sqrt(dist_squared)
         
+        # Create dictionary to store dist_squared with index pairs
+        distance_dict = {(i_a, i_b): dist_squared[i_a, i_b] for i_a in range(dist_squared.shape[0]) for i_b in range(dist_squared.shape[1])}
+        distance_dict = dict(sorted(distance_dict.items(), key=lambda item: item[1]))
+        return distance_dict
 
+
+    def process_velocities(self):
+        last_package = self.get_last()
+        if last_package is not None:
+            if not last_package['frame_id'] == self.last_frame_id:
+                self.last_frame_id = last_package['frame_id'] 
+                timestamp = int(last_package['frame_id'])
+                self.list_timestamps.append(timestamp)
+                dict_unlabeled = last_package['unlabeled_markers'] 
+                current_labels = dict_unlabeled.keys()
+                # import pdb; pdb.set_trace()
+                if not self.list_labels:
+                    self.list_labels = list(current_labels)[:self.max_nr_markers]
+                    self.set_labels = set(self.list_labels)
+                    new_positions = np.array([dict_unlabeled[k] for k in self.list_labels])
+                    self.positions[self.pos_idx,:len(self.list_labels),:] = new_positions
+                    self.dict_label_idx = dict(zip(self.list_labels,range(len(current_labels))))
+                else:                   
+                    set_current_labels = set(current_labels)
+                    self.set_labels = set(self.list_labels)
+                    set_missing_labels = self.set_labels - set_current_labels
+                    list_missing_labels = list(set_missing_labels)
+                    set_new_labels = set_current_labels - self.set_labels
+                    list_new_labels = list(set_new_labels)
+                    
+                    list_known_labels = list(set_current_labels.intersection(self.set_labels))
+                    if list_known_labels:
+                        list_known_idx = [self.dict_label_idx[l] for l in list_known_labels]
+                        list_known_idx.sort()
+                        known_positions = np.array([dict_unlabeled[k] for k in list_known_labels])
+                        self.positions[self.pos_idx, list_known_idx, :] = known_positions
+                        assert self.pos_idx
+                        dt = (timestamp - self.last_timestamp)/1000
+                        self.velocities[self.pos_idx,list_known_idx,:] = (self.positions[self.pos_idx,list_known_idx,:] - self.positions[self.pos_idx-1,list_known_idx,:])/dt
+                    
+                    # print('uggggg')
+                    dict_unlabeled_last = self.list_unlabeled[-1]
+                    if list_missing_labels and list_new_labels:
+                        list_missing_idx = [self.dict_label_idx[l] for l in list_missing_labels]
+                        missing_positions = self.positions[self.pos_idx-1, list_missing_idx, :]
+                        if np.isnan(missing_positions[0,0]):
+                            import pdb; pdb.set_trace()
+                        assert not np.isnan(missing_positions[0,0])
+                        # missing_positions = np.array([dict_unlabeled_last[k] for i, k in enumerate(list_missing_labels)])
+                        new_positions = np.array([dict_unlabeled[k] for i, k in enumerate(list_new_labels)])
+                        sq_distances = self.compute_sq_distances(missing_positions, new_positions)
+                        # xx
+                        for i in sq_distances.keys():
+                            missing_idx = i[0]
+                            new_idx = i[1]
+                            # missing_pos = missing_positions[missing_idx]
+                            missing_label = list_missing_labels[missing_idx]
+                            new_label = list_new_labels[new_idx]
+                            if missing_label in set_missing_labels and new_label in set_new_labels:
+                                new_pos = new_positions[new_idx]
+                                marker_idx = self.dict_label_idx[missing_label]
+                                self.positions[self.pos_idx, marker_idx, :] = new_pos
+                                self.dict_label_idx[new_label] = self.dict_label_idx[missing_label]
+                                del self.dict_label_idx[missing_label]
+                                set_missing_labels.remove(missing_label)
+                                set_new_labels.remove(new_label)
+                                # print(set_missing_labels)
+                                if not set_new_labels or not set_missing_labels:
+                                    break
+                    if set_missing_labels: # fill last values
+                        list_missing_idx = [self.dict_label_idx[ml] for ml in set_missing_labels]
+                        self.positions[self.pos_idx,list_missing_idx,:] = self.positions[self.pos_idx-1,list_missing_idx,:]
+                        self.velocities[self.pos_idx,list_missing_idx,:] = 0
+                            
+                # dict_unlabeled_last = dict_unlabeled
+                self.list_labels = list(self.dict_label_idx.keys())
+                self.list_unlabeled.append(dict_unlabeled)
+                self.pos_idx += 1
+                self.last_timestamp = timestamp
+                if self.pos_idx >= self.max_buffer_size:
+                    print('cleaning buffer')
+                    self.pos_idx = self.pos_idx // 2
+                    self.list_unlabeled = self.list_unlabeled[self.pos_idx:]
+                    self.list_timestamps = self.list_timestamps[self.pos_idx:]
+                    positions_old = np.copy(self.positions)
+                    velocities_old = np.copy(self.velocities)
+                    self.positions = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])*np.nan
+                    self.velocities = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])
+                    self.positions[:self.pos_idx] = positions_old[-self.pos_idx:]
+                    self.velocities[:self.pos_idx] = velocities_old[-self.pos_idx:]
+                    
     def get_marker_label(self, index):  
         # Check if the index is within the valid range
         if 0 <= index < len(self.marker_labels):
@@ -64,6 +179,7 @@ class MarkerTracker:
         self.thread.start()
 
     def read_output(self):
+        
         packet_content = []
         while self.running:
             time.sleep(self.sleep_time)
@@ -75,6 +191,7 @@ class MarkerTracker:
 
             # self.list_raw_frames.append(output)
             output = output.strip()
+            # print(output)
             if output == "==========BEGINPACKET==========":
                 # print("beginning packet!")
                 packet_content = []
@@ -82,6 +199,12 @@ class MarkerTracker:
                 # print("end packet!")
                 self.save_packet(packet_content)
                 self.process_packet(packet_content)
+                if "velocities" in self.process_list:
+                    time_new = time.time()
+                    dt = time_new - self.v_last_time
+                    if dt > self.v_sampling_time:
+                        self.v_last_time = time_new
+                        self.process_velocities()
             else:
                 packet_content.append(output)
                 
@@ -112,7 +235,7 @@ class MarkerTracker:
         dict_package = {"frame_id" : frame_id, "timestamp" : timestamp}
         if "labeled_markers" in self.process_list:
             dict_package["labeled_markers"] = self.extract_labeled_markers(data)
-        if "unlabeled_markers" in self.process_list:
+        if "unlabeled_markers" in self.process_list or "velocities" in self.process_list:
             dict_package["unlabeled_markers"] = self.extract_unlabeled_markers(data)
         if "rigid_bodies" in self.process_list:
             dict_package["rigid_bodies"] = self.extract_rigid_bodies(data)
@@ -409,35 +532,148 @@ class RigidBody:
         #     self.angular_velocities.append(last_angular_velocity)
         #     self.angular_accelerations.append(last_angular_acceleration)
 
+# def compute_sq_distances(a, b):
+#     # Calculate differences using broadcasting
+#     diff = a[:, np.newaxis, :] - b[np.newaxis, :, :]
+#     # Calculate squared Euclidean distances
+#     dist_squared = np.sum(diff ** 2, axis=2)
+#     ## Take square root to get Euclidean distances
+#     # distances = np.sqrt(dist_squared)
+    
+#     # Create dictionary to store dist_squared with index pairs
+#     distance_dict = {(i_a, i_b): dist_squared[i_a, i_b] for i_a in range(dist_squared.shape[0]) for i_b in range(dist_squared.shape[1])}
+#     distance_dict = dict(sorted(distance_dict.items(), key=lambda item: item[1]))
+#     return distance_dict
+
+def compute_sq_distances(a, b):
+    # Calculate differences using broadcasting
+    diff = a[:, np.newaxis, :] - b[np.newaxis, :, :]
+    # Calculate squared Euclidean distances
+    dist_squared = np.sum(diff ** 2, axis=2)
+    ## Take square root to get Euclidean distances
+    # distances = np.sqrt(dist_squared)
+    
+    # Create dictionary to store dist_squared with index pairs
+    distance_dict = {(i_a, i_b): dist_squared[i_a, i_b] for i_a in range(dist_squared.shape[0]) for i_b in range(dist_squared.shape[1])}
+    distance_dict = dict(sorted(distance_dict.items(), key=lambda item: item[1]))
+    return distance_dict
 
 if __name__ == "__main__":
     motive = MarkerTracker('192.168.50.64')
     
+    # last_frame_id = 0
+    # list_labels = []
+    # dict_label_idx = {}
+    # set_labels = set()
+    # list_unlabeled = []
+    # list_timestamps = []
     
-    last_frame_id = 0
-    list_labels = []
+    # max_nr_markers = 10
+    # max_buffer_size = 10000
+    # positions = np.zeros([max_buffer_size, max_nr_markers, 3])*np.nan
+    # velocities = np.zeros([max_buffer_size, max_nr_markers, 3])
+    # pos_idx = 0
     
-    for _ in range(1000):
-        time.sleep(0.01)
-        last_package = motive.get_last()
-        if last_package is not None:
-            if last_package['frame_id'] == last_frame_id:
-                continue
-            else:
-                last_frame_id = last_package['frame_id'] 
-                print(last_frame_id)
-            
-            
-    #     left_hand.update()
+    # last_timestamp = None
+    
+    
+    # for _ in range(10000):
+    #     time.sleep(0.01)
+    #     #%%
+    #     last_package = motive.get_last()
+    #     if last_package is not None:
+    #         if not last_package['frame_id'] == last_frame_id:
+    #             last_frame_id = last_package['frame_id'] 
+    #             timestamp = int(last_package['frame_id'])
+    #             list_timestamps.append(timestamp)
+    #             dict_unlabeled = last_package['unlabeled_markers'] 
+    #             current_labels = dict_unlabeled.keys()
+                
+    #             if not list_labels:
+    #                 list_labels = list(current_labels)[:max_nr_markers]
+    #                 set_labels = set(list_labels)
+    #                 new_positions = np.array([dict_unlabeled[k] for k in list_labels])
+    #                 positions[pos_idx,:len(list_labels),:] = new_positions
+    #                 dict_label_idx = dict(zip(list_labels,range(len(current_labels))))
+    #             else:                   
+    #                 set_current_labels = set(current_labels)
+    #                 set_labels = set(list_labels)
+    #                 set_missing_labels = set_labels - set_current_labels
+    #                 list_missing_labels = list(set_missing_labels)
+    #                 set_new_labels = set_current_labels - set_labels
+    #                 list_new_labels = list(set_new_labels)
+                    
+    #                 list_known_labels = list(set_current_labels.intersection(set_labels))
+    #                 print(f'known {list_known_labels}')
+    #                 print(f'missing {list_missing_labels}')
+    #                 print(f'new {list_new_labels}')
+    #                 if list_known_labels:
+    #                     list_known_idx = [dict_label_idx[l] for l in list_known_labels]
+    #                     list_known_idx.sort()
+    #                     known_positions = np.array([dict_unlabeled[k] for k in list_known_labels])
+    #                     positions[pos_idx, list_known_idx, :] = known_positions
+    #                     assert pos_idx
+    #                     dt = (timestamp - last_timestamp)/1000
+    #                     velocities[pos_idx,list_known_idx,:] = (positions[pos_idx,list_known_idx,:] - positions[pos_idx-1,list_known_idx,:])/dt
+                    
+    #                 dict_unlabeled_last = list_unlabeled[-1]
+    #                 if list_missing_labels and list_new_labels:
+    #                     print('uggggg')
+    #                     list_missing_idx = [dict_label_idx[l] for l in list_missing_labels]
+    #                     missing_positions = positions[pos_idx-1, list_missing_idx, :]
+    #                     assert not np.isnan(missing_positions[0,0])
+    #                     # missing_positions = np.array([dict_unlabeled_last[k] for i, k in enumerate(list_missing_labels)])
+    #                     new_positions = np.array([dict_unlabeled[k] for i, k in enumerate(list_new_labels)])
+    #                     sq_distances = compute_sq_distances(missing_positions, new_positions)
+    #                     # xx
+    #                     for i in sq_distances.keys():
+    #                         missing_idx = i[0]
+    #                         new_idx = i[1]
+    #                         # missing_pos = missing_positions[missing_idx]
+    #                         missing_label = list_missing_labels[missing_idx]
+    #                         new_label = list_new_labels[new_idx]
+    #                         if missing_label in set_missing_labels and new_label in set_new_labels:
+    #                             new_pos = new_positions[new_idx]
+    #                             marker_idx = dict_label_idx[missing_label]
+    #                             positions[pos_idx, marker_idx, :] = new_pos
+    #                             dict_label_idx[new_label] = dict_label_idx[missing_label]
+    #                             del dict_label_idx[missing_label]
+    #                             set_missing_labels.remove(missing_label)
+    #                             set_new_labels.remove(new_label)
+    #                             print(set_missing_labels)
+    #                             if not set_new_labels or not set_missing_labels:
+    #                                 break
+    #                 if set_missing_labels: # fill last values
+    #                     print('here')
+    #                     list_missing_idx = [dict_label_idx[ml] for ml in set_missing_labels]
+    #                     positions[pos_idx,list_missing_idx,:] = positions[pos_idx-1,list_missing_idx,:]
+                            
+    #             # dict_unlabeled_last = dict_unlabeled
+    #             list_labels = list(dict_label_idx.keys())
+    #             list_unlabeled.append(dict_unlabeled)
+    #             pos_idx += 1
+    #             last_timestamp = timestamp
+
+
+
+#%%
+#                 # set_labels = set_labels.union(new_labels)
+#                 # print(f'new: {len(new_labels)}, missing: {len(missing_labels)}')
+#                 # print(dict_unlabeled)
+#                 # if len(missing_labels):
+#                 #     xx
+#     #     left_hand.update()
         
     #     print(right_hand.positions)
     
         
     
+# import numpy as np
+
+
+
     
-    
-    
-    
+#%%    
     
     # list_positions = []
     # list_velocities = []
