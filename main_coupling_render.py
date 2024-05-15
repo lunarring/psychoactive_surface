@@ -18,6 +18,7 @@ from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, Sta
 from diffusers.models import AutoencoderKL, ImageProjection, UNet2DConditionModel
 from diffusers import AutoencoderTiny
 import torch
+import torchvision
 from prompt_blender import PromptBlender
 from tqdm import tqdm
 from sfast.compilers.diffusion_pipeline_compiler import (compile, CompilationConfig)
@@ -27,14 +28,16 @@ import u_deepacid
 import hashlib
 from PIL import Image
 import os
+import kornia
 import cv2
 import matplotlib.pyplot as plt
 import colorsys
 import torch.nn.functional as F
 from image_processing import multi_match_gpu
 from util_motive_receiver import MarkerTracker, RigidBody
+import torchvision.transforms as T
 #%% VARS
-use_compiled_model = False
+do_compile = False
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -197,6 +200,23 @@ def multi_match_gpu(list_images, weights=None, simple=False, clip_max='auto', gp
             list_images_new.append(img_new.cpu().numpy())
     return list_images_new
 
+def angle_to_rgb(angle):
+    """
+    Convert an angle in radians (0 to 2*pi) to an RGB color vector.
+    
+    Parameters:
+        angle (float): Angle in radians, where 0 to 2*pi maps to 0 to 1 in the hue.
+
+    Returns:
+        tuple: RGB color as a 3-element tuple, each component in the range 0 to 1.
+    """
+    # Normalize the angle to a range from 0 to 1
+    hue = angle / (2 * 3.141592653589793)
+    # Set saturation and value to 1 for maximum intensity and brightness
+    saturation = 0.9
+    value = 1
+    # Convert HSV to RGB
+    return colorsys.hsv_to_rgb(hue, saturation, value)
 
 def rotate_hue(image, angle):
     """
@@ -221,6 +241,28 @@ def rotate_hue(image, angle):
     rotated_image = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
     
     return rotated_image
+
+def rotate_hue_torch(image, angle):
+    # Convert angle from degrees to radians
+
+    image = image.permute(2,0,1).unsqueeze(0)
+    angle = angle * np.pi / 180
+    
+    # Normalize the image tensor to [0, 1]
+    if image.max() > 1:
+        image = image / 255.0
+    
+    # Convert RGB to HSV
+    image_hsv = kornia.color.rgb_to_hsv(image)
+    image_hsv[:, 0, :, :] = (image_hsv[:, 0, :, :] + angle / (2 * np.pi)) % 1.0
+    
+    # Convert HSV back to RGB
+    image_rgb = kornia.color.hsv_to_rgb(image_hsv)
+    
+    # Convert the image back to [0, 255] range
+    image_rgb = image_rgb * 255.0
+    image_rgb = image_rgb.squeeze(0).permute(1,2,0)
+    return image_rgb
 
 #%%
 
@@ -261,29 +303,26 @@ class NoodleMachine():
         self.effect2functs[effect_name] = func      
         for cause_name in cause_names:
             if cause_name not in self.causes.keys():
-                self.causes[cause_name] = None
+                self.causes[cause_name] = 0
             if do_auto_scale:
                 self.dict_cause_max[cause_name] = None
                 self.dict_cause_min[cause_name] = None
             
-    def set_cause(self, cause_name, cause_value, must_exist=False):
-        if cause_name in self.causes.keys():
-            if cause_name in self.dict_cause_max.keys():
-                if self.dict_cause_max[cause_name] is None or cause_value > self.dict_cause_max[cause_name]:
-                    self.dict_cause_max[cause_name] = cause_value
-                if self.dict_cause_min[cause_name] is None or cause_value < self.dict_cause_min[cause_name]:
-                    self.dict_cause_min[cause_name] = cause_value
-                if self.dict_cause_max[cause_name] is not None and self.dict_cause_min[cause_name] is not None:
-                    if self.dict_cause_max[cause_name] == self.dict_cause_min[cause_name]:
-                        self.causes[cause_name] = 0.5
-                    else:
-                        self.causes[cause_name] = (cause_value - self.dict_cause_min[cause_name])/(self.dict_cause_max[cause_name]-self.dict_cause_min[cause_name])
+    def set_cause(self, cause_name, cause_value):
+        if cause_name in self.dict_cause_max.keys():
+            if self.dict_cause_max[cause_name] is None or cause_value > self.dict_cause_max[cause_name]:
+                self.dict_cause_max[cause_name] = cause_value
+            if self.dict_cause_min[cause_name] is None or cause_value < self.dict_cause_min[cause_name]:
+                self.dict_cause_min[cause_name] = cause_value
+            if self.dict_cause_max[cause_name] is not None and self.dict_cause_min[cause_name] is not None:
+                if self.dict_cause_max[cause_name] == self.dict_cause_min[cause_name]:
+                    self.causes[cause_name] = 0.5
                 else:
-                    self.causes[cause_name] = cause_value
+                    self.causes[cause_name] = (cause_value - self.dict_cause_min[cause_name])/(self.dict_cause_max[cause_name]-self.dict_cause_min[cause_name])
             else:
                 self.causes[cause_name] = cause_value
-        elif must_exist:
-            raise ValueError(f'cause {cause_name} not known')
+        else:
+            self.causes[cause_name] = cause_value
             
     def reset_range(self, cause_name):
         if cause_name in self.dict_cause_max:
@@ -299,7 +338,8 @@ class NoodleMachine():
             if cause_name not in self.causes.keys():
                 raise ValueError(f'cause {cause_name} not known')
             elif self.causes[cause_name] is None:
-                raise ValueError(f'cause {cause_name} not set')
+                print(f'WARNING: cause {cause_name} not set, returning 0.')
+                # raise ValueError(f'cause {cause_name} not set')
             cause_values.append(self.causes[cause_name])
         return self.effect2functs[effect_name](cause_values)
                 
@@ -317,7 +357,8 @@ class PromptHolder():
         self.init_buttons()
         self.active_space_idx = 0
         self.dir_embds_imgs = "embds_imgs"
-        self.negative_prompt = "blurry, lowres, disfigured"
+        self.negative_prompt = "blurry, lowres, disfigured, thin lines"
+        self.negative_prompt = "blurry, lowres, thin lines"
         if not os.path.exists(dir_embds_imgs):
             os.makedirs(dir_embds_imgs)
         self.init_prompts()
@@ -473,7 +514,7 @@ pipe_text2img.set_progress_bar_config(disable=True)
 
 pipe_text2img.unet.forward = forward_modulated.__get__(pipe_text2img.unet, UNet2DConditionModel)
     
-if use_compiled_model:
+if do_compile:
     pipe_text2img.enable_xformers_memory_efficient_attention()
     config = CompilationConfig.Default()
     config.enable_xformers = True
@@ -488,7 +529,7 @@ pipe_img2img.set_progress_bar_config(disable=True)
 
 pipe_img2img.unet.forward = forward_modulated.__get__(pipe_img2img.unet, UNet2DConditionModel)
     
-if use_compiled_model:    
+if do_compile:    
     pipe_img2img.enable_xformers_memory_efficient_attention()
     config = CompilationConfig.Default()
     config.enable_xformers = True
@@ -508,6 +549,12 @@ secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, b
 
 prompt_holder = PromptHolder(pb, size_img_tiles_hw)
 
+underlay_image = cv2.imread('/home/lugo/Documents/forest.jpg')
+underlay_image = np.flip(underlay_image, axis=2)
+underlay_image = cv2.resize(underlay_image, (600,300))
+
+blur_kernel = torchvision.transforms.GaussianBlur(11, sigma=(7, 7))
+blur_kernel_noise = torchvision.transforms.GaussianBlur(5, sigma=(3, 3))
 
 #%% prepare prompt window
 gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, size_img_tiles_hw)
@@ -575,7 +622,6 @@ def compute_mixed_embed(selected_embeds, weights):
     return embeds_mod_full
 
 #%%#
-noodle_machine = NoodleMachine()
 
 negative_prompt = "blurry, lowres, disfigured"
 space_prompt = prompt_holder.prompt_spaces[prompt_holder.active_space][0]
@@ -612,10 +658,14 @@ noise_img2img = torch.randn((1,4,pb.h,pb.w)).half().cuda() * 0
 
 t_last = time.time()
 
+#%% noodling zone
+
+noodle_machine = NoodleMachine()
 sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
 effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot', 'zoom_factor']
 
-motion_feature_names = ['total_kinetic_energy', 'left_hand_y', 'right_hand_y', 'center_velocity']
+motion_feature_names = ['total_kinetic_energy', 'total_absolute_momentum', 'total_angular_momentum']
+body_feature_names = ['left_hand_y', 'right_hand_y']
 
 ## sound coupling
 # noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
@@ -623,27 +673,28 @@ motion_feature_names = ['total_kinetic_energy', 'left_hand_y', 'right_hand_y', '
 # noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 
 
-noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
+noodle_machine.create_noodle(['absolute_angular_momentum'], 'diffusion_noise_mod')
 noodle_machine.create_noodle(['right_hand_y'], 'd_fract_noise_mod')
 noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 
 # noodle_machine.create_noodle('DJLOW', 'd_fract_noise_mod')
 noodle_machine.create_noodle('total_kinetic_energy', 'd_fract_prompt_mod')
 # noodle_machine.create_noodle('total_kinetic_energy', 'mem_acid_mod')
+noodle_machine.create_noodle('total_spread', 'mem_acid_mod')
 
-
+#%%
 
 # TRACKING SYSTEM
-motive = MarkerTracker('192.168.50.64')
+motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "velocities"])
 
-right_hand = RigidBody(motive, "right_hand")
-left_hand = RigidBody(motive, "left_hand")
-center = RigidBody(motive, "center")
-head = RigidBody(motive, "head")
-right_foot = RigidBody(motive, "right_foot")
-left_foot = RigidBody(motive, "left_foot")
+# right_hand = RigidBody(motive, "right_hand")
+# left_hand = RigidBody(motive, "left_hand")
+# center = RigidBody(motive, "center")
+# head = RigidBody(motive, "head")
+# right_foot = RigidBody(motive, "right_foot")
+# left_foot = RigidBody(motive, "left_foot")
 
-list_body_parts = [right_hand, left_hand, right_foot, left_foot, head, center]
+# list_body_parts = [right_hand, left_hand, right_foot, left_foot, head, center]
 
 time.sleep(0.5)
 init_drawing = True
@@ -668,46 +719,96 @@ latents1 = pb.get_latents()
 latents2 = pb.get_latents()
 coords = np.zeros(3)
 
+do_kinematics = True
+last_render_timestamp = 0
+
+frame_count = 0
 while True:
-    # MOTIVE FOR PASTA tracking first
-    right_hand.update()
-    left_hand.update()
-    right_foot.update()
-    left_foot.update()
-    center.update()
-    head.update()
-    
-    # if len(right_hand.kinetic_energies) > 0:
-    #     print(right_hand.kinetic_energies[-1])
-    
-    total_kinetic_energy = 0
-    try:
-        for part in list_body_parts:
-            total_kinetic_energy += part.kinetic_energies[-1]
+    if do_kinematics:
+        # MOTIVE FOR PASTA tracking first
+        # right_hand.update()
+        # left_hand.update()
+        # right_foot.update()
+        # left_foot.update()
+        # center.update()
+        # head.update()
         
-        right_hand_y = right_hand.positions[-1][1]
-        left_hand_y = left_hand.positions[-1][1]
-        right_hand_x = right_hand.positions[-1][0]
-        left_hand_x = left_hand.positions[-1][0]
-        right_hand_z = right_hand.positions[-1][2]
-        left_hand_z = left_hand.positions[-1][2]
-        center_velocity = np.linalg.norm(center.velocities[-1])
-    except Exception as E:
-        print(E)
-        right_hand_y = 0
-        left_hand_y = 0
-        right_hand_x = 0
-        left_hand_x = 0
-        right_hand_z = 0
-        left_hand_z = 0
-        center_velocity = 0
+        # if len(right_hand.kinetic_energies) > 0:
+        #     print(right_hand.kinetic_energies[-1])
         
-    # print(f'total_kinetic_energy: {total_kinetic_energy}')
-    noodle_machine.set_cause('right_hand_y', right_hand_y)
-    noodle_machine.set_cause('total_kinetic_energy', total_kinetic_energy)
-    print(f'right_hand_y: {right_hand_y}')
-    # print(f'total_kinetic_energy: {total_kinetic_energy}')
+        # pos_history_range = 10    
+        # pos_idx = motive.pos_idx
+        # if pos_idx < pos_history_range:
+        #     position_history = np.zeros([pos_history_range,motive.positions.shape[1],3])
+        #     times = np.ones(pos_history_range) / 1000
+        #     # last_velocities = np.zeros([10,motive.positions.shape[1],3])
+        # else:
+        #     position_history = motive.positions[motive.pos_idx-pos_history_range:motive.pos_idx]
+        #     not_nan = ~np.isnan(position_history.sum(axis=0).sum(axis=1))
+        #     position_history = position_history[:,not_nan,:]
+        #     times = np.array(motive.list_timestamps[motive.pos_idx-pos_history_range:motive.pos_idx]) / 1000
+        # masses = np.ones(len(positions))
+        masses = 1
+        # positions_l = position_history[pos_history_range//2]
+        # positions_ll = position_history[0]
+        positions = motive.positions[motive.pos_idx-1]
+        velocities = motive.velocities[motive.pos_idx-1]
+        not_nan = ~np.isnan(positions.sum(axis=1))
+        positions = positions[not_nan]
+        velocities = velocities[not_nan]
+        # velocities = (positions - positions_l)/(times[-1] - times[pos_history_range//2])
+        # velocities_l = (positions_l - positions_ll)/(times[pos_history_range//2]-times[0])
+        # accelerations = (velocities - velocities_l)/(times[-1] - times[pos_history_range//2])
+        # center_of_mass = np.average(positions, axis=0, weights=masses)
+        center_of_mass = np.average(positions, axis=0)
+        rel_positions = positions - center_of_mass
+        momenta = masses * velocities
+        angular_momenta = np.cross(rel_positions, momenta)
+        total_angular_momentum = angular_momenta.sum(axis=0)
+        absolute_angular_momentum = abs(total_angular_momentum).sum()
+        # kinetic_energies = 0.5 * masses * np.linalg.norm(velocities)**2
+        kinetic_energies = 0.5 * np.linalg.norm(velocities, axis=1)**2
+        total_kinetic_energy = kinetic_energies.sum()
+        total_kinetic_energy_sqrt = np.sqrt(total_kinetic_energy)
+        total_absolute_momentum = abs(momenta).sum()
+        noodle_machine.set_cause('total_absolute_momentum', total_absolute_momentum)
+        # potential_energy = center_of_mass[1] * masses.sum()
+        potential_energy = center_of_mass[1] #* masses.sum()
+        total_spread = np.linalg.norm(rel_positions, axis=1).sum()
+        noodle_machine.set_cause('total_spread', total_spread)
+        # print(rel_positions)
+        # print(f'total angular momentum {total_angular_momentum}')
+        try:
+            for part in list_body_parts:
+                total_kinetic_energy += part.kinetic_energies[-1]
+            
+            right_hand_y = right_hand.positions[-1][1]
+            left_hand_y = left_hand.positions[-1][1]
+            right_hand_x = right_hand.positions[-1][0]
+            left_hand_x = left_hand.positions[-1][0]
+            right_hand_z = right_hand.positions[-1][2]
+            left_hand_z = left_hand.positions[-1][2]
+            center_velocity = np.linalg.norm(center.velocities[-1])
+        except Exception as E:
+            # print(E)
+            right_hand_y = 0
+            left_hand_y = 0
+            right_hand_x = 0
+            left_hand_x = 0
+            right_hand_z = 0
+            left_hand_z = 0
+            center_velocity = 0
+            
+        # print(f'total_kinetic_energy: {total_kinetic_energy}')
+        noodle_machine.set_cause('right_hand_y', right_hand_y)
+        noodle_machine.set_cause('total_kinetic_energy', total_kinetic_energy)
+        # print(f'right_hand_y: {right_hand_y}')
+        # print(f'total_kinetic_energy: {total_kinetic_energy}')
+        
     
+    # OSC Sound coupling block
+    osc1 = np.random.rand()
+    noodle_machine.set_cause('osc1', osc1)
     
     # REST
     if fract_noise >= 1:
@@ -769,18 +870,18 @@ while True:
             del modulations['d0_extra_embeds']
         
     
-    # d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-    d_fract_noise_gain = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-    d_fract_noise_mod = noodle_machine.get_effect('d_fract_noise_mod')
+    d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0.01)
+    # d_fract_noise_gain = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
+    # d_fract_noise_mod = noodle_machine.get_effect('d_fract_noise_mod')
         
-    d_fract_noise = d_fract_noise_mod * d_fract_noise_gain * 0.5
+    # d_fract_noise = d_fract_noise_mod * d_fract_noise_gain * 0.5
     
     
-    # d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.1, val_default=0)
-    d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=1, val_default=0)
+    d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.1, val_default=0)
+    # d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=1, val_default=0)
     # d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=0.003, val_default=0)
-    d_fract_prompt_mod = noodle_machine.get_effect('d_fract_prompt_mod')     
-    d_fract_prompt = d_fract_prompt_mod * d_fract_prompt_gain
+    # d_fract_prompt_mod = noodle_machine.get_effect('d_fract_prompt_mod')     
+    # d_fract_prompt = d_fract_prompt_mod * d_fract_prompt_gain
     
     cross_attention_kwargs ={}
     cross_attention_kwargs['modulations'] = modulations        
@@ -814,33 +915,34 @@ while True:
     #         cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
             
     do_color_matching = midi_input.get("F4", button_mode="toggle")
-    speed_movie = midi_input.get("B1", val_min=1, val_max=16, val_default=1)
+    speed_movie = midi_input.get("B1", val_min=2, val_max=16, val_default=2)
     hue_rot_drive = int(midi_input.get("G0", val_min=0.0, val_max=255, val_default=0))
     
-    image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0.5)
-    color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0)
+    image_inlay_gain = midi_input.get("F0", val_min=0.0, val_max=1, val_default=0.95)
+    color_matching = midi_input.get("F2", val_min=0.0, val_max=1., val_default=0.2)
     
-    zoom_factor_base = midi_input.get("F1", val_min=0, val_max=1, val_default=1)
-    zoom_factor_gain = midi_input.get("B2", val_min=0, val_max=1, val_default=1)
-    try:
-        zoom_factor_mod = noodle_machine.get_effect('zoom_factor_mod')
-    except:
-        zoom_factor_mod = 0
+    zoom_factor_base = midi_input.get("F1", val_min=0.8, val_max=1.2, val_default=0.992)
+    zoom_factor = zoom_factor_base
+    # zoom_factor_gain = midi_input.get("B2", val_min=0, val_max=1, val_default=1)
+    # try:
+    #     zoom_factor_mod = noodle_machine.get_effect('zoom_factor_mod')
+    # except:
+    #     zoom_factor_mod = 0
     
-    zoom_factor = 0.8 + 0.4*(zoom_factor_base + zoom_factor_gain * zoom_factor_mod)
+    # zoom_factor = 0.8 + 0.4*(zoom_factor_base + zoom_factor_gain * zoom_factor_mod)
     
     do_debug_verlay = midi_input.get("H3", button_mode="toggle")
     do_drawing = midi_input.get("E3", button_mode="toggle")
-    disable_zoom = midi_input.get("H4", button_mode="toggle")
+    disable_zoom = not midi_input.get("H4", button_mode="toggle")
     
-    diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
+    diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0.1)
     diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
     
-    mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0)
+    mem_acid_base = midi_input.get("G2", val_min=0.0, val_max=1, val_default=0.15)
     mem_acid_gain = midi_input.get("H2", val_min=0.0, val_max=1, val_default=0)
     
     
-    get_new_embed_modifier = midi_input.get("B4", button_mode="released_once")
+    get_new_embed_modifier = midi_input.get("B3", button_mode="released_once")
     
     if get_new_embed_modifier:
         selected_modifiers = random.sample(list_embed_modifiers_prompts, nmb_embed_modifiers)
@@ -852,11 +954,14 @@ while True:
         # embeds_mod_full = pb.get_prompt_embeds(prompt_embed_modifier)
         # print(f"new embed modifier: {prompt_embed_modifier} idx {idx_embed_mod}")
     
-    mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
-    decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
-    coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
-    drawing_intensity = midi_input.get("D2", val_min=1, val_max=15, val_default=10)
-    
+    mask_radius = midi_input.get("E2", val_min=0, val_max=50, val_default=35)
+    decay_rate = np.sqrt(midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.92))
+    coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=80)
+    # drawing_intensity = midi_input.get("D2", val_min=1, val_max=500, val_default=10)
+    drawing_intensity = midi_input.get("D2", val_min=0, val_max=1, val_default=0.2)
+    # drawing_noise_strength = midi_input.get("C1", val_min=0, val_max=100, val_default=10)
+    use_underlay_image = midi_input.get("D3", button_mode="toggle")
+    color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0.55)
     if use_image2image:
         kwargs['num_inference_steps'] = 2
         
@@ -875,7 +980,11 @@ while True:
                 sz_drawing = [300,600,3]
                 
                 canvas = torch.zeros(sz_drawing, device=latents.device)
-                noise_patch = torch.rand(sz_drawing, device=latents.device)
+                # print(drawing_noise_strength)
+                # noise_patch = 1+(torch.rand(sz_drawing, device=latents.device) - 0.5)*drawing_noise_strength
+                noise_patch = torch.rand(sz_drawing, device=latents.device) #- 0.5
+                # noise_patch = blur_kernel_noise(noise_patch.permute([2,0,1])[None])
+                # noise_patch = noise_patch[0].permute([1,2,0])
                 # draw_pos_y = canvas.shape[0]//2
                 # draw_pos_x = canvas.shape[1]//2
                 init_drawing = False
@@ -897,10 +1006,12 @@ while True:
             # 64 ms for 39 markers
             # coordinate test run
             
+            xm = motive.get_last()['unlabeled_markers']
+            coord_array = np.array(list(xm.values()))
             
-            # xm = motive.get_last()['labeled_markers']
-            # coord_array = np.array(list(xm.values()))
-            coord_array = np.array([[left_hand_x, left_hand_y, left_hand_z], [right_hand_x, right_hand_y, right_hand_z]])
+        
+            
+            # coord_array = np.array([[left_hand_x, left_hand_y, left_hand_z], [right_hand_x, right_hand_y, right_hand_z]])
 
             # rigid body positions
             # xm = motive.get_last()['rigid_bodies']
@@ -908,59 +1019,94 @@ while True:
             
             
             # coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
-            coord_offset = np.array([0,3,3])[None]
+            # coord_offset = np.array([0,3,3])[None]
+            # coord_offset = np.array([0,1.5,1])[None]
+            # coord_offset = np.array([0,130,280])[None]   # screen center
+            coord_offset = np.array([0,180,280])[None]
             
             if len(coord_array) > 0:
-            # invert Y axis
+                
                 coord_array[:,1] = -coord_array[:,1]
+                x_distance = coord_array[:,0].copy()
+                
+                x_mean_dist = x_distance.mean() 
+                if x_mean_dist < 0:
+                    x_mean_dist = 0
+                
+                coord_array[:,1:] *= coord_scale
+                # coord_array[:,1:] *= x_mean_dist * 100
+                
                 coord_array += coord_offset
                 coord_array[coord_array < 0] = 0
                 
-                coord_array *= coord_scale
-                coord_array = coord_array.astype(np.int32)
-                
                 coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
                 coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
+                
+                
+                coord_array = coord_array.astype(np.int32)
+                
+                # print(f'x_mean_dist {x_mean_dist}')
                 
                 # Mask parameters
                 # mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
                 # constant_hue = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0)
                 
-                # mask_radius = midi_input.get("E2", val_min=0, val_max=10, val_default=2)
     
-                # erase
-                # canvas[:] = 0
                 
                 # decay canvas
-                # decay_rate = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.9)
                 canvas = canvas * decay_rate
-                # canvas[:] = 0
                 
                 # Create a grid of coordinates
                 Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
                 X = X.float()
                 Y = Y.float()
                 
+                # canvas = blur_kernel(canvas.permute([2,0,1])[None])
+                # canvas = canvas[0].permute([1,2,0])
+                
                 # color_vec = torch.zeros((1,1,3), device=latents.device)
                 # color_vec[0,0,:] = torch.rand(3).cuda()*10
                 # print(f'color_vec {color_vec}')
+                # print(f'coord_array {coord_array[:,0]}')
                 
                 for idx, coord in enumerate(coord_array):
                     # marker drop
-                    if idx < color_vec.shape[0]:
-                        colors = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius).unsqueeze(2)*noise_patch*color_vec[idx][None][None]
+                    # color_angle = float(coord_array[idx,0]*1)
+                    # color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0)
+                    color_vec = angle_to_rgb(color_angle)
+                    color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
+                    if use_underlay_image:
+                        color_vec[:] = 1
+                    
+                    patch = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius)
+                    if use_underlay_image:
+                        colors = patch.unsqueeze(2)*color_vec[None][None]
+                    else:
+                        colors = patch.unsqueeze(2)*noise_patch*color_vec[None][None]
         
                     # Add the color gradient to the image
-                    canvas += colors * drawing_intensity
-                    
-                canvas = torch.roll(canvas, 2, dims=[0])
+                    colors /= (colors.max() + 0.0001)
+                    canvas += colors * drawing_intensity * 255
+                    canvas = canvas.clamp(0, 255)
+                # canvas = torch.roll(canvas, -1, dims=[0])
             else:
                 print('cant see markers')
 
+            print(f'canvas_max: {canvas.max()}')
             # Ensure values remain within the 0-255 range after addition
-            img_drive = canvas.cpu().numpy()
-            img_drive = np.clip(img_drive, 0, 255)
-            img_drive = img_drive.astype(np.uint8)
+            canvas_numpy = canvas.cpu().numpy()
+            canvas_numpy = np.clip(canvas_numpy, 0, 255)
+            
+            
+            if use_underlay_image:
+                canvas_numpy /= 255
+                img_drive = underlay_image * canvas_numpy
+                img_drive = img_drive.astype(np.uint8)
+            else:
+                img_drive = canvas_numpy
+                
+            # print(f'max img_drive {img_drive.max()}')
+            
                 
         else:
             # speed_movie += int(av_router.get_modulation('acid'))
@@ -982,7 +1128,7 @@ while True:
         # diffusion_noise_base = midi_input.get("G1", val_min=0.0, val_max=1, val_default=0)
         # diffusion_noise_gain = midi_input.get("H1", val_min=0.0, val_max=1, val_default=0)
         
-        print(f'diffusion_noise_mod {diffusion_noise_mod}')
+        # print(f'diffusion_noise_mod {diffusion_noise_mod}')
         
         diffusion_noise = 1 * (diffusion_noise_base + diffusion_noise_gain*diffusion_noise_mod)
         
@@ -998,7 +1144,7 @@ while True:
         mem_acid = mem_acid_base + mem_acid_gain * mem_acid_mod
         if mem_acid > 1:
             mem_acid = 1
-        print(f'mem_acid {mem_acid}')
+        # print(f'mem_acid {mem_acid}')
 
         if prev_diffusion_output is not None:
             prev_diffusion_output = np.array(prev_diffusion_output)
@@ -1088,16 +1234,21 @@ while True:
     fract_noise += d_fract_noise + fract_osc
     fract_prompt += d_fract_prompt + fract_osc
             
-    do_new_space = midi_input.get("B3", button_mode="released_once") 
+    do_new_space = midi_input.get("B4", button_mode="released_once") 
     if do_new_space:     
         prompt_holder.set_next_space()
         list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
         gridrenderer.update(list_imgs)
         
     do_auto_change = midi_input.get("A4", button_mode="toggle")
-    
+    frame_count += 1
+    if frame_count % 1000 == 0:
+        midi_input.show()
 
-
+    time_difference = time.time() - last_render_timestamp
+    last_render_timestamp = time.time()
+    fps = np.round(1/time_difference)
+    # lt.dynamic_print(f'fps: {fps}')
 
 
 
