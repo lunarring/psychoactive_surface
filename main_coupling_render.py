@@ -885,8 +885,9 @@ while True:
     
     enable_embed_mod = midi_input.get("A3", button_mode="toggle")
     kill_embed_weights = midi_input.get("C3", button_mode="toggle")
+    max_embed_mods = midi_input.get("A2", val_min=0.3, val_max=2.5, val_default=0.8)
     if enable_embed_mod:
-        max_embed_mods = 0.8
+        
         amp_embed_mod1 = midi_input.get(f"A5", val_min=0, val_max=max_embed_mods, val_default=0)
         amp_embed_mod2 = midi_input.get(f"B5", val_min=0, val_max=max_embed_mods, val_default=0)
         amp_embed_mod3 = midi_input.get(f"C5", val_min=0, val_max=max_embed_mods, val_default=0)
@@ -919,7 +920,7 @@ while True:
     d_fract_noise_gain = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0.01)
     d_fract_noise = d_fract_noise_gain * noodle_machine.get_effect('d_fract_noise_mod')
     
-    d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.03, val_default=0)
+    d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.01, val_default=0)
     # d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=1, val_default=0)
     # d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=0.003, val_default=0)
     # d_fract_prompt_mod = noodle_machine.get_effect('d_fract_prompt_mod')     
@@ -929,7 +930,7 @@ while True:
     cross_attention_kwargs['modulations'] = modulations        
     
     latents_mix = pb.interpolate_spherical(latents1, latents2, fract_noise)
-    fract_prompt_nonlinearity = midi_input.get("A2", val_min=0.0, val_max=3, val_default=1.7)
+    fract_prompt_nonlinearity = 1.7#midi_input.get("A2", val_min=0.0, val_max=3, val_default=1.7)
     pb.blend_stored_embeddings(remap_fract(fract_prompt, fract_prompt_nonlinearity))
     
     kwargs = {}
