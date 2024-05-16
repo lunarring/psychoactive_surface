@@ -141,6 +141,7 @@ if __name__ == "__main__":
     
     
     width = 1024
+    # width = 512
     height = 512
     num_inference_steps = 1
     gpt_model = "gpt-4"

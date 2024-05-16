@@ -255,6 +255,26 @@ def rotate_hue(image, angle):
     
     return rotated_image
 
+from sklearn.cluster import KMeans
+
+# Generate some sample data
+np.random.seed(42)
+X = np.random.rand(100, 3)  # 100 points in 2D
+
+# Set the number of clusters
+def kmeans (X, num_clusters = 2):
+
+    # Create the k-means clustering model
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+    
+    # Fit the model to the data
+    kmeans.fit(X)
+    
+    # Get the cluster centroids and labels
+    centroids = kmeans.cluster_centers_
+    labels = kmeans.labels_
+    return labels, centroids
+
 def rotate_hue_torch(image, angle):
     # Convert angle from degrees to radians
 
@@ -787,6 +807,10 @@ while True:
         not_nan = ~np.isnan(positions.sum(axis=1))
         positions = positions[not_nan]
         velocities = velocities[not_nan]
+        
+        #!! remove later
+        # positions = positions[abs(velocities).sum(axis=1)>0.1]
+        # velocities = velocities[abs(velocities).sum(axis=1)>0.1]
         # velocities = (positions - positions_l)/(times[-1] - times[pos_history_range//2])
         # velocities_l = (positions_l - positions_ll)/(times[pos_history_range//2]-times[0])
         # accelerations = (velocities - velocities_l)/(times[-1] - times[pos_history_range//2])
@@ -808,7 +832,7 @@ while True:
         potential_energy = center_of_mass[1] #* masses.sum()
         total_spread = np.linalg.norm(rel_positions, axis=1).sum()
         noodle_machine.set_cause('total_spread', total_spread)
-        # print(rel_positions)
+        # print(positions)
         # print(f'total angular momentum {total_angular_momentum}')
         try:
             for part in list_body_parts:
@@ -1000,7 +1024,7 @@ while True:
     
     mask_radius = midi_input.get("E2", val_min=0, val_max=50, val_default=35)
     decay_rate = np.sqrt(midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.92))
-    coord_scale = midi_input.get("E1", val_min=0.0, val_max=300, val_default=80)
+    coord_scale = midi_input.get("E1", val_min=0.0, val_max=600, val_default=80)
     # drawing_intensity = midi_input.get("D2", val_min=1, val_max=500, val_default=10)
     drawing_intensity = midi_input.get("D2", val_min=0, val_max=1, val_default=0.2)
     # drawing_noise_strength = midi_input.get("C1", val_min=0, val_max=100, val_default=10)
@@ -1054,10 +1078,16 @@ while True:
             # 64 ms for 39 markers
             # coordinate test run
             
-            xm = motive.get_last()['unlabeled_markers']
-            coord_array = np.array(list(xm.values()))
+            # xm = motive.get_last()['unlabeled_markers']
+            # coord_array = np.array(list(xm.values()))
             
-        
+            
+            
+            
+            coord_array = positions.copy()
+            idx_lowest = np.argmin(coord_array[:,1])
+            coord_array -= coord_array[idx_lowest,:][None]
+            coord_array[:,1] = -coord_array[:,1]
             
             # coord_array = np.array([[left_hand_x, left_hand_y, left_hand_z], [right_hand_x, right_hand_y, right_hand_z]])
 
@@ -1070,30 +1100,35 @@ while True:
             # coord_offset = np.array([0,3,3])[None]
             # coord_offset = np.array([0,1.5,1])[None]
             # coord_offset = np.array([0,130,280])[None]   # screen center
-            coord_offset = np.array([0,180,280])[None]
+            coord_offset = np.array([0,240,280])[None]
             # coord_offset = np.array([0,280,280])[None]
             
             if len(coord_array) > 0:
                 
-                coord_array[:,1] = -coord_array[:,1]
-                x_distance = coord_array[:,0].copy()
-                y_distance = coord_array[0,:].copy()
-                
-                x_mean_dist = x_distance.mean() 
-                if x_mean_dist < 0:
-                    x_mean_dist = 0
-                y_mean_dist = y_distance.mean() 
-                if y_mean_dist < 0:
-                    y_mean_dist = 0
-                
                 coord_array[:,1:] *= coord_scale
-                # coord_array[:,1:] *= x_mean_dist * 100
-                
-                coord_offset = np.array([0,y_mean_dist*canvas.shape[0],y_mean_dist*canvas.shape[1]])
-                
                 coord_array += coord_offset
-                coord_array[coord_array < 0] = 0
                 
+                if False:
+                    coord_array[:,1] = -coord_array[:,1]
+                    x_distance = coord_array[:,0].copy()
+                    y_distance = coord_array[0,:].copy()
+                    
+                    x_mean_dist = x_distance.mean() 
+                    if x_mean_dist < 0:
+                        x_mean_dist = 0
+                    y_mean_dist = y_distance.mean() 
+                    if y_mean_dist < 0:
+                        y_mean_dist = 0
+                    
+                    coord_array[:,1:] *= coord_scale
+                    # coord_array[:,1:] *= x_mean_dist * 100
+                    
+                    # coord_offset = np.array([0,y_mean_dist*canvas.shape[0],x_mean_dist*canvas.shape[1]])
+                    
+                    coord_array += coord_offset
+                
+                coord_array[coord_array < 0] = 0
+                    
                 coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
                 coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
                 
@@ -1130,8 +1165,11 @@ while True:
                     # color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0)
                     color_vec = angle_to_rgb(color_angle)
                     color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
+                    
                     if use_underlay_image:
                         color_vec[:] = 1
+                        
+                    color_vec[:] = 1
                     
                     patch = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius)
                     if use_underlay_image:
@@ -1147,7 +1185,7 @@ while True:
             else:
                 print('cant see markers')
 
-            print(f'canvas_max: {canvas.max()}')
+            # print(f'canvas_max: {canvas.max()}')
             # Ensure values remain within the 0-255 range after addition
             canvas_numpy = canvas.cpu().numpy()
             canvas_numpy = np.clip(canvas_numpy, 0, 255)
