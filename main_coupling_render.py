@@ -36,6 +36,16 @@ import torch.nn.functional as F
 from image_processing import multi_match_gpu
 from util_motive_receiver import MarkerTracker, RigidBody
 import torchvision.transforms as T
+
+"""
+REFACTOR OPS
+- all inits in one place
+- all important variables in one place
+- banish aux functions away
+- prompt folder handling
+- load a scene (embed mods)
+- embeds mod motchie!
+"""
 #%% VARS
 do_compile = False
 res_fact = 1.5
@@ -46,18 +56,23 @@ height_renderer = 512*2
 
 size_img_tiles_hw = (120, 260)   # tile image size
 nmb_rows, nmb_cols = (7,7)       # number of tiles
-ip_address_osc_receiver = '10.40.49.28'
+ip_address_osc_receiver = '192.168.50.238'
+ip_address_osc_sender = '192.168.50.42' # this name is a bit confusing
 dir_embds_imgs = "embds_imgs"
-show_osc_visualization = False
+show_osc_visualization = True
 use_cam = False
 
 
 # key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
 
-#%% aux func
+# AUTO VARS
+
 width_latents = int(np.round(width_latents/16)*16)
 height_latents = int(np.round(height_latents/16)*16)
 shape_cam=(600,800) 
+
+
+#%% aux func
 
 class MovieReaderCustom():
     r"""
@@ -89,7 +104,7 @@ class MovieReaderCustom():
             self.video_player_object.set(cv2.CAP_PROP_POS_FRAMES, 0)
             return np.random.randint(0,20,self.shape).astype(np.uint8)
 
-#%% Image processing functions. These should live somewhere else
+#% Image processing functions. These should live somewhere else
 def zoom_image_torch(input_tensor, zoom_factor):
     # Ensure the input is a 4D tensor [batch_size, channels, height, width]
     if len(input_tensor.shape) == 3:
@@ -264,7 +279,7 @@ def rotate_hue_torch(image, angle):
     image_rgb = image_rgb.squeeze(0).permute(1,2,0)
     return image_rgb
 
-#%%
+#%
 
 def get_sample_shape_unet(coord):
     if coord[0] == 'e':
@@ -292,7 +307,7 @@ class NoodleMachine():
         self.dict_cause_min = {}
         self.dict_cause_max = {}
     
-    def create_noodle(self, cause_names, effect_name, func=np.prod, do_auto_scale=True):
+    def create_noodle(self, cause_names, effect_name, func=np.prod, do_auto_scale=True, init_value=0):
         if type(cause_names) == str:
             cause_names = [cause_names]
         assert hasattr(cause_names, '__getitem__')
@@ -303,7 +318,7 @@ class NoodleMachine():
         self.effect2functs[effect_name] = func      
         for cause_name in cause_names:
             if cause_name not in self.causes.keys():
-                self.causes[cause_name] = 0
+                self.causes[cause_name] = init_value
             if do_auto_scale:
                 self.dict_cause_max[cause_name] = None
                 self.dict_cause_min[cause_name] = None
@@ -343,7 +358,7 @@ class NoodleMachine():
             cause_values.append(self.causes[cause_name])
         return self.effect2functs[effect_name](cause_values)
                 
-#%%
+#%
 
 class PromptHolder():
     def __init__(self, prompt_blender, size_img_tiles_hw, use_image2image=False):
@@ -358,7 +373,7 @@ class PromptHolder():
         self.active_space_idx = 0
         self.dir_embds_imgs = "embds_imgs"
         self.negative_prompt = "blurry, lowres, disfigured, thin lines"
-        self.negative_prompt = "blurry, lowres, thin lines"
+        self.negative_prompt = "blurry, lowres, thin lines, text"
         if not os.path.exists(dir_embds_imgs):
             os.makedirs(dir_embds_imgs)
         self.init_prompts()
@@ -499,9 +514,18 @@ def remap_fract(x, c):
     else:
         return 1 - 0.5 * np.power(2 * (1 - x), 1 / (1 + c))
 
+def compute_mixed_embed(selected_embeds, weights):
+    embeds_mod_full = []
+    for i in range(4):
+        for j in range(len(weights)):
+            if j==0:
+                emb = selected_embeds[j][i] * weights[j]
+            else:
+                emb += selected_embeds[j][i] * weights[j]
+        embeds_mod_full.append(emb)
+    return embeds_mod_full
 
-
-#%% inits
+#%% INITS
 midi_input = lt.MidiInput(device_name="akai_midimix")
 
 pipe_img2img = AutoPipelineForImage2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16", local_files_only=True)
@@ -537,14 +561,13 @@ if do_compile:
     config.enable_cuda_graph = True
     pipe_img2img = compile(pipe_img2img, config)
 
-# acidman = u_deepacid.AcidMan(0, meta_input, None)
-# acidman.init('a01')
-
 pb = PromptBlender(pipe_text2img)
 pb.w = width_latents
 pb.h = height_latents
 latents = pb.get_latents()
 secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, backend='opencv')
+
+motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "velocities"])
 
 
 prompt_holder = PromptHolder(pb, size_img_tiles_hw)
@@ -556,7 +579,7 @@ underlay_image = cv2.resize(underlay_image, (600,300))
 blur_kernel = torchvision.transforms.GaussianBlur(11, sigma=(7, 7))
 blur_kernel_noise = torchvision.transforms.GaussianBlur(5, sigma=(3, 3))
 
-#%% prepare prompt window
+#% prepare prompt window
 gridrenderer = lt.GridRenderer(nmb_rows, nmb_cols, size_img_tiles_hw)
 
 list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
@@ -566,7 +589,8 @@ if use_cam:
     cam = lt.WebCam(cam_id=0, shape_hw=shape_cam)
     cam.cam.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
-receiver = lt.OSCReceiver(ip_address_osc_receiver, port_receiver = 8003)
+receiver = lt.OSCReceiver(ip_address_osc_receiver)
+sender = lt.OSCSender(ip_address_osc_sender)
 if show_osc_visualization:
     receiver.start_visualization(shape_hw_vis=(300, 500), nmb_cols_vis=3, nmb_rows_vis=2,backend='opencv')
 
@@ -581,45 +605,50 @@ list_fp_movies = ['bangbang_dance_interp_mflow','blue_dancer_interp_mflow',
                   'multiskeleton_dance_interp_mflow','skeleton_dance_interp_mflow',
                   'betta_fish', 'complex_ink', 'lava_lamp', 'liquid1_slow',
                   'liquid12_cropped_slow','neon_dancer']
-
+# list_fp_movies = ['abstract_liquid', 'betta_fish']
 fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
 movie_reader = MovieReaderCustom(fp_movie)
 
 #%% decoder embedding mixing
 
-list_embed_modifiers_prompts = ["dramatic", "black and white", "metallic", "color explosion", "wood", 
-    "stone", "abstract", "rusty", "bright", "high contrast", "neon", "surreal",
-    "minimalistic", "vintage", "futuristic",  "glossy",
-    "matte finish", "psychedelic", "gritty", "ethereal", "soft focus", "glowing",
-    "shadowy", "muted colors", "saturated", "dusty", "crystalline", "film noir",
-    "steampunk", "monochrome",  "holographic", "textured",
-    "velvet", "mirror", "blurry", "geometric", "mosaic", "oil-painted",
-    "watercolor", "charcoal sketch", "pen and ink", "silhouetted",
-    "thermal imaging", "acidic", "noir",
-    "zen", "chaotic", "floral", "urban decay", "oceanic", "space", "cyberpunk",
-    "tropical", "antique", "radiant", "ghostly", "disco",
-    "medieval",  "glitch", "pop art", "frosted",
-    "chiaroscuro", "apocalyptic", "heavenly", "infernal", "submerged",
-    "jewel-toned", "bioluminescent", "lace", "bejeweled",
-    "enamel", "tattooed", "cobwebbed", "granular", "rippled", "pixelated",
-    "collage", "marbled", "fluffy", "frozen"
+# list_embed_modifiers_prompts = ["dramatic", "black and white", "metallic", "color explosion", "wood", 
+#     "stone", "abstract", "rusty", "bright", "high contrast", "neon", "surreal",
+#     "minimalistic", "vintage", "futuristic",  "glossy",
+#     "matte finish", "psychedelic", "gritty", "ethereal", "soft focus", "glowing",
+#     "shadowy", "muted colors", "saturated", "dusty", "crystalline", "film noir",
+#     "steampunk", "monochrome",  "holographic", "textured",
+#     "velvet", "mirror", "blurry", "geometric", "mosaic", "oil-painted",
+#     "watercolor", "charcoal sketch", "pen and ink", "silhouetted",
+#     "thermal imaging", "acidic", "noir",
+#     "zen", "chaotic", "floral", "urban decay", "oceanic", "space", "cyberpunk",
+#     "tropical", "antique", "radiant", "ghostly", "disco",
+#     "medieval",  "glitch", "pop art", "frosted",
+#     "chiaroscuro", "apocalyptic", "heavenly", "infernal", "submerged",
+#     "jewel-toned", "bioluminescent", "lace", "bejeweled",
+#     "enamel", "tattooed", "cobwebbed", "granular", "rippled", "pixelated",
+#     "collage", "marbled", "fluffy", "frozen"
+# ]
+
+list_embed_modifiers_prompts = ["rusty", "corroded", "dystopian", "cyberpunk", "eerie", "gothic", 
+    "sinister", "abandoned", "shadowy", "grim", "blood-stained", "mechanical", "grimy", "haunting",
+    "ominous", "distorted", "metallic", "dark", "gloomy", "vintage", "broken", "desolate",
+    "violent", "war-torn", "industrial", "decayed", "creepy", "haunted", "murky", "grungy",
+    "steampunk", "chaotic", "noir", "macabre", "bleak", "glitched", "disheveled", "barbed",
+    "rundown", "twisted", "gruesome", "cluttered", "derelict", "bio-mechanical", "ominous glow",
+    "alien", "jagged", "deformed", "demonic", "steely", "dark fantasy", "destructive",
+    "overgrown", "blood-soaked", "rusted chains", "gore", "punk", "menacing", "horrifying",
+    "monstrous", "nightmarish", "bleak future", "warped", "ironclad", "horror",
+    "cybernetic", "cold", "frightening", "dismal", "scorched", "devastated",
+    "clawed", "mutant", "explosive", "barbaric", "intimidating", "toxic",
+    "iron", "battered", "chained", "brutal", "worn-out", "piercing", "vengeful",
+    "charred", "corrosive", "warrior", "destructive", "spiked", "fearsome"
 ]
+
 
 nmb_embed_modifiers = 5
 selected_modifiers = random.sample(list_embed_modifiers_prompts, nmb_embed_modifiers)
 selected_embeds = [pb.get_prompt_embeds(modifier) for modifier in selected_modifiers]
 
-
-def compute_mixed_embed(selected_embeds, weights):
-    embeds_mod_full = []
-    for i in range(4):
-        for j in range(len(weights)):
-            if j==0:
-                emb = selected_embeds[j][i] * weights[j]
-            else:
-                emb += selected_embeds[j][i] * weights[j]
-        embeds_mod_full.append(emb)
-    return embeds_mod_full
 
 #%%#
 
@@ -661,31 +690,38 @@ t_last = time.time()
 #%% noodling zone
 
 noodle_machine = NoodleMachine()
-sound_feature_names = ['DJLOW', 'DJMID', 'DJHIGH']
-effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot', 'zoom_factor']
+sound_feature_names = ['crash', 'hihat', 'kick', 'snare']
+# sound_feature_names = ['osc1', 'osc2', 'osc3', 'osc4', 'osc5']
 
-motion_feature_names = ['total_kinetic_energy', 'total_absolute_momentum', 'total_angular_momentum']
-body_feature_names = ['left_hand_y', 'right_hand_y']
+
+# effect_names = ['diffusion_noise', 'mem_acid', 'hue_rot', 'zoom_factor'] # UNUSED
+# motion_feature_names = ['total_kinetic_energy', 'total_absolute_momentum', 'total_angular_momentum'] # UNUSED
+# body_feature_names = ['left_hand_y', 'right_hand_y'] # UNUSED
 
 ## sound coupling
-# noodle_machine.create_noodle(['DJMID'], 'diffusion_noise_mod')
+noodle_machine.create_noodle('drive', 'd_fract_noise_mod', init_value=1)
+noodle_machine.create_noodle('crash', 'sound_embed_mod_1', init_value=1)
+noodle_machine.create_noodle('hihat', 'sound_embed_mod_2', init_value=1)
+noodle_machine.create_noodle('kick', 'sound_embed_mod_3', init_value=1)
+noodle_machine.create_noodle('snare', 'sound_embed_mod_4', init_value=1)
+noodle_machine.create_noodle('osc5', 'sound_embed_mod_5', init_value=1)
 # noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
 # noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 
 
 noodle_machine.create_noodle(['absolute_angular_momentum'], 'diffusion_noise_mod')
-noodle_machine.create_noodle(['right_hand_y'], 'd_fract_noise_mod')
-noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
+# noodle_machine.create_noodle(['right_hand_y'], 'd_fract_noise_mod')
+# noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 
 # noodle_machine.create_noodle('DJLOW', 'd_fract_noise_mod')
 noodle_machine.create_noodle('total_kinetic_energy', 'd_fract_prompt_mod')
 # noodle_machine.create_noodle('total_kinetic_energy', 'mem_acid_mod')
 noodle_machine.create_noodle('total_spread', 'mem_acid_mod')
 
-#%%
 
-# TRACKING SYSTEM
-motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "velocities"])
+
+
+#%% 
 
 # right_hand = RigidBody(motive, "right_hand")
 # left_hand = RigidBody(motive, "left_hand")
@@ -693,16 +729,10 @@ motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "velo
 # head = RigidBody(motive, "head")
 # right_foot = RigidBody(motive, "right_foot")
 # left_foot = RigidBody(motive, "left_foot")
-
 # list_body_parts = [right_hand, left_hand, right_foot, left_foot, head, center]
 
 time.sleep(0.5)
 init_drawing = True
-
-
-
-# xm = motive.get_last()['labeled_markers']
-# coord_array = np.array(list(xm.values()))
 
 color_vec = torch.rand(2,3).cuda()*100
 
@@ -724,6 +754,7 @@ last_render_timestamp = 0
 
 frame_count = 0
 while True:
+    sender.send_message('\test', frame_count)
     if do_kinematics:
         # MOTIVE FOR PASTA tracking first
         # right_hand.update()
@@ -806,9 +837,6 @@ while True:
         # print(f'total_kinetic_energy: {total_kinetic_energy}')
         
     
-    # OSC Sound coupling block
-    osc1 = np.random.rand()
-    noodle_machine.set_cause('osc1', osc1)
     
     # REST
     if fract_noise >= 1:
@@ -818,7 +846,7 @@ while True:
         latents2 = pb.get_latents() 
         
     if fract_prompt >= 1:
-        if do_auto_change:
+        if do_auto_change_prompts:
             # go to random img
             space_prompt = random.choice(list_prompts[2:]) #because of two buttons 
             print(f"auto change to: {space_prompt}")
@@ -833,8 +861,8 @@ while True:
     dt = time.time() - t_last
     t_last = time.time()
     # show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
-    # if show_osc_visualization:
-    #     receiver.show_visualization()
+    if show_osc_visualization:
+        receiver.show_visualization()
         
     use_image2image = midi_input.get("G3", button_mode="toggle")
     
@@ -855,29 +883,42 @@ while True:
     
     
     enable_embed_mod = midi_input.get("A3", button_mode="toggle")
+    kill_embed_weights = midi_input.get("C3", button_mode="toggle")
     if enable_embed_mod:
+        max_embed_mods = 3
+        amp_embed_mod1 = midi_input.get(f"A5", val_min=0, val_max=max_embed_mods, val_default=0)
+        amp_embed_mod2 = midi_input.get(f"B5", val_min=0, val_max=max_embed_mods, val_default=0)
+        amp_embed_mod3 = midi_input.get(f"C5", val_min=0, val_max=max_embed_mods, val_default=0)
+        amp_embed_mod4 = midi_input.get(f"D5", val_min=0, val_max=max_embed_mods, val_default=0)
+        amp_embed_mod5 = midi_input.get(f"E5", val_min=0, val_max=max_embed_mods, val_default=0)
+        
         weights_emb = []
-        for k in range(nmb_embed_modifiers):
-            weights_emb.append(midi_input.get(f"{chr(65 + k)}5", val_min=0, val_max=1, val_default=0, variable_name = f"embed {k}"))
+        weights_emb.append(amp_embed_mod1 * noodle_machine.get_effect("sound_embed_mod_1"))
+        weights_emb.append(amp_embed_mod2 * noodle_machine.get_effect("sound_embed_mod_2"))
+        weights_emb.append(amp_embed_mod3 * noodle_machine.get_effect("sound_embed_mod_3"))
+        weights_emb.append(amp_embed_mod4 * noodle_machine.get_effect("sound_embed_mod_4"))
+        weights_emb.append(amp_embed_mod5 * noodle_machine.get_effect("sound_embed_mod_5"))
+        
+        # for k in range(nmb_embed_modifiers):
+            # weights_emb.append(midi_input.get(f"{chr(65 + k)}5", val_min=0, val_max=1, val_default=0, variable_name = f"embed {k}"))
         
         embeds_mod_full = compute_mixed_embed(selected_embeds, weights_emb)
         total_weight = np.sum(np.asarray(weights_emb))
         embeds_mod = pb.blend_prompts(pb.embeds_current, embeds_mod_full, total_weight)
         if total_weight > 0:
             modulations['d0_extra_embeds'] = embeds_mod[0]
+        if kill_embed_weights and 'd0_extra_embeds' in modulations:
+            del modulations['d0_extra_embeds']
     else:
         if 'd0_extra_embeds' in modulations:
             del modulations['d0_extra_embeds']
         
     
-    d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0.01)
-    # d_fract_noise_gain = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0)
-    # d_fract_noise_mod = noodle_machine.get_effect('d_fract_noise_mod')
-        
-    # d_fract_noise = d_fract_noise_mod * d_fract_noise_gain * 0.5
+    # d_fract_noise = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0.01)
+    d_fract_noise_gain = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0.01)
+    d_fract_noise = d_fract_noise_gain * noodle_machine.get_effect('d_fract_noise_mod')
     
-    
-    d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.1, val_default=0)
+    d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.03, val_default=0)
     # d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=1, val_default=0)
     # d_fract_prompt_gain = midi_input.get("A1", val_min=0.0, val_max=0.003, val_default=0)
     # d_fract_prompt_mod = noodle_machine.get_effect('d_fract_prompt_mod')     
@@ -887,7 +928,7 @@ while True:
     cross_attention_kwargs['modulations'] = modulations        
     
     latents_mix = pb.interpolate_spherical(latents1, latents2, fract_noise)
-    fract_prompt_nonlinearity = midi_input.get("A2", val_min=0.0, val_max=3, val_default=0)
+    fract_prompt_nonlinearity = midi_input.get("A2", val_min=0.0, val_max=3, val_default=1.7)
     pb.blend_stored_embeddings(remap_fract(fract_prompt, fract_prompt_nonlinearity))
     
     kwargs = {}
@@ -946,6 +987,7 @@ while True:
     
     if get_new_embed_modifier:
         selected_modifiers = random.sample(list_embed_modifiers_prompts, nmb_embed_modifiers)
+        print(f"get_new_embed_modifier: {selected_modifiers}")
         selected_embeds = [pb.get_prompt_embeds(modifier) for modifier in selected_modifiers]
         # idx_embed_mod += 1
         # if idx_embed_mod == len(list_embed_modifiers_prompts):
@@ -1180,13 +1222,10 @@ while True:
     prev_diffusion_output = img_mix.astype(np.float32)
     
 
-    hue_rot_mod = noodle_machine.get_effect('hue_rot_mod')
-
-    hue_rot_gain = midi_input.get("H0", val_min=0, val_max=1, val_default=0)
-    
-    hue_rot = 100 * hue_rot_gain * hue_rot_mod
-    
-    img_mix = rotate_hue(img_mix, hue_rot)
+    # hue_rot_mod = noodle_machine.get_effect('hue_rot_mod')
+    # hue_rot_gain = midi_input.get("H0", val_min=0, val_max=1, val_default=0)
+    # hue_rot = 100 * hue_rot_gain * hue_rot_mod
+    # img_mix = rotate_hue(img_mix, hue_rot)
     
     if do_debug_verlay and use_image2image:
         secondary_renderer.render(img_drive)
@@ -1240,7 +1279,7 @@ while True:
         list_prompts, list_imgs = prompt_holder.get_prompts_imgs_within_space(nmb_cols*nmb_rows)
         gridrenderer.update(list_imgs)
         
-    do_auto_change = midi_input.get("A4", button_mode="toggle")
+    do_auto_change_prompts = midi_input.get("A4", button_mode="toggle")
     frame_count += 1
     if frame_count % 1000 == 0:
         midi_input.show()
