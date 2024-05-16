@@ -39,15 +39,13 @@ import torchvision.transforms as T
 
 """
 REFACTOR OPS
-- all inits in one place
-- all important variables in one place
 - banish aux functions away
 - prompt folder handling
 - load a scene (embed mods)
 - embeds mod motchie!
 """
 #%% VARS
-do_compile = False
+do_compile = True
 res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -601,12 +599,13 @@ speech_detector = lt.Speech2Text()
 reference_time = time.time()
 
 dn_movie = 'psurf_vids'        
-list_fp_movies = ['bangbang_dance_interp_mflow','blue_dancer_interp_mflow',
+list_fn_movies_all = ['bangbang_dance_interp_mflow','blue_dancer_interp_mflow',
                   'multiskeleton_dance_interp_mflow','skeleton_dance_interp_mflow',
                   'betta_fish', 'complex_ink', 'lava_lamp', 'liquid1_slow',
                   'liquid12_cropped_slow','neon_dancer']
-# list_fp_movies = ['abstract_liquid', 'betta_fish']
-fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
+list_fn_movies = list_fn_movies_all[:]
+# list_fn_movies = ['abstract_liquid', 'betta_fish']
+fp_movie = os.path.join(dn_movie, np.random.choice(list_fn_movies) + '.mp4')
 movie_reader = MovieReaderCustom(fp_movie)
 
 #%% decoder embedding mixing
@@ -699,12 +698,13 @@ sound_feature_names = ['crash', 'hihat', 'kick', 'snare']
 # body_feature_names = ['left_hand_y', 'right_hand_y'] # UNUSED
 
 ## sound coupling
-noodle_machine.create_noodle('drive', 'd_fract_noise_mod', init_value=1)
+noodle_machine.create_noodle('hihat', 'd_fract_noise_mod', init_value=1)
 noodle_machine.create_noodle('crash', 'sound_embed_mod_1', init_value=1)
-noodle_machine.create_noodle('hihat', 'sound_embed_mod_2', init_value=1)
+noodle_machine.create_noodle('xxxxhihat', 'sound_embed_mod_2', init_value=1)
 noodle_machine.create_noodle('kick', 'sound_embed_mod_3', init_value=1)
 noodle_machine.create_noodle('snare', 'sound_embed_mod_4', init_value=1)
 noodle_machine.create_noodle('osc5', 'sound_embed_mod_5', init_value=1)
+noodle_machine.create_noodle('osc6', 'sound_embed_mod_6', init_value=1)
 # noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
 # noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 
@@ -793,6 +793,7 @@ while True:
         # center_of_mass = np.average(positions, axis=0, weights=masses)
         center_of_mass = np.average(positions, axis=0)
         rel_positions = positions - center_of_mass
+        # print(positions)
         momenta = masses * velocities
         angular_momenta = np.cross(rel_positions, momenta)
         total_angular_momentum = angular_momenta.sum(axis=0)
@@ -885,7 +886,7 @@ while True:
     enable_embed_mod = midi_input.get("A3", button_mode="toggle")
     kill_embed_weights = midi_input.get("C3", button_mode="toggle")
     if enable_embed_mod:
-        max_embed_mods = 3
+        max_embed_mods = 0.8
         amp_embed_mod1 = midi_input.get(f"A5", val_min=0, val_max=max_embed_mods, val_default=0)
         amp_embed_mod2 = midi_input.get(f"B5", val_min=0, val_max=max_embed_mods, val_default=0)
         amp_embed_mod3 = midi_input.get(f"C5", val_min=0, val_max=max_embed_mods, val_default=0)
@@ -998,7 +999,7 @@ while True:
     
     mask_radius = midi_input.get("E2", val_min=0, val_max=50, val_default=35)
     decay_rate = np.sqrt(midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.92))
-    coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=80)
+    coord_scale = midi_input.get("E1", val_min=0.0, val_max=300, val_default=80)
     # drawing_intensity = midi_input.get("D2", val_min=1, val_max=500, val_default=10)
     drawing_intensity = midi_input.get("D2", val_min=0, val_max=1, val_default=0.2)
     # drawing_noise_strength = midi_input.get("C1", val_min=0, val_max=100, val_default=10)
@@ -1008,7 +1009,11 @@ while True:
         kwargs['num_inference_steps'] = 2
         
         if do_new_movie:
-            fp_movie = os.path.join(dn_movie, np.random.choice(list_fp_movies) + '.mp4')
+            if len(list_fn_movies) == 0:
+                list_fn_movies = list_fn_movies_all[:]
+            fn_movie = np.random.choice(list_fn_movies)
+            list_fn_movies.remove(fn_movie)
+            fp_movie = os.path.join(dn_movie, fn_movie + '.mp4')
             print(f'switching movie to {fp_movie}')
             movie_reader.load_movie(fp_movie)
         
@@ -1065,18 +1070,25 @@ while True:
             # coord_offset = np.array([0,1.5,1])[None]
             # coord_offset = np.array([0,130,280])[None]   # screen center
             coord_offset = np.array([0,180,280])[None]
+            # coord_offset = np.array([0,280,280])[None]
             
             if len(coord_array) > 0:
                 
                 coord_array[:,1] = -coord_array[:,1]
                 x_distance = coord_array[:,0].copy()
+                y_distance = coord_array[0,:].copy()
                 
                 x_mean_dist = x_distance.mean() 
                 if x_mean_dist < 0:
                     x_mean_dist = 0
+                y_mean_dist = y_distance.mean() 
+                if y_mean_dist < 0:
+                    y_mean_dist = 0
                 
                 coord_array[:,1:] *= coord_scale
                 # coord_array[:,1:] *= x_mean_dist * 100
+                
+                coord_offset = np.array([0,y_mean_dist*canvas.shape[0],y_mean_dist*canvas.shape[1]])
                 
                 coord_array += coord_offset
                 coord_array[coord_array < 0] = 0
