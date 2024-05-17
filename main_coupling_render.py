@@ -46,11 +46,11 @@ REFACTOR OPS
 """
 #%% VARS
 do_compile = True
-res_fact = 1.5
+res_fact = 1.0
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
-width_renderer = int(1024*2)
-height_renderer = 512*2
+width_renderer = 1920
+height_renderer = 1080
 
 size_img_tiles_hw = (120, 260)   # tile image size
 nmb_rows, nmb_cols = (7,7)       # number of tiles
@@ -59,6 +59,7 @@ ip_address_osc_sender = '192.168.50.42' # this name is a bit confusing
 dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
 use_cam = False
+do_fullscreen = True
 
 
 # key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
@@ -256,7 +257,29 @@ def rotate_hue(image, angle):
     return rotated_image
 
 from sklearn.cluster import KMeans
+from sklearn.ensemble import IsolationForest
+def detect_outliers(data, contamination=0.1):
+    """
+    Detect outliers in the data using Isolation Forest.
 
+    Parameters:
+    - data (array-like): The input data, shape (n_samples, n_features)
+    - contamination (float): The proportion of outliers in the data set, default is 0.1
+
+    Returns:
+    - numpy array: Boolean array indicating outliers (True for outliers, False for inliers)
+    """
+    # Ensure data is a numpy array
+    data = np.array(data)
+    
+    # Initialize the IsolationForest
+    iso_forest = IsolationForest(contamination=contamination, random_state=42)
+    
+    # Fit the model and predict outliers
+    outliers = iso_forest.fit_predict(data)
+    
+    # Convert predictions (-1 for outliers, 1 for inliers) to boolean
+    return outliers == -1
 # Generate some sample data
 np.random.seed(42)
 X = np.random.rand(100, 3)  # 100 points in 2D
@@ -583,9 +606,10 @@ pb = PromptBlender(pipe_text2img)
 pb.w = width_latents
 pb.h = height_latents
 latents = pb.get_latents()
-secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, backend='opencv')
+secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, 
+                                 backend='opencv', do_fullscreen=True)
 
-motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "velocities"])
+motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "velocities", "rigid_bodies"])
 
 
 prompt_holder = PromptHolder(pb, size_img_tiles_hw)
@@ -648,23 +672,70 @@ movie_reader = MovieReaderCustom(fp_movie)
 #     "collage", "marbled", "fluffy", "frozen"
 # ]
 
-list_embed_modifiers_prompts = ["rusty", "corroded", "dystopian", "cyberpunk", "eerie", "gothic", 
-    "sinister", "abandoned", "shadowy", "grim", "blood-stained", "mechanical", "grimy", "haunting",
-    "ominous", "distorted", "metallic", "dark", "gloomy", "vintage", "broken", "desolate",
-    "violent", "war-torn", "industrial", "decayed", "creepy", "haunted", "murky", "grungy",
-    "steampunk", "chaotic", "noir", "macabre", "bleak", "glitched", "disheveled", "barbed",
-    "rundown", "twisted", "gruesome", "cluttered", "derelict", "bio-mechanical", "ominous glow",
-    "alien", "jagged", "deformed", "demonic", "steely", "dark fantasy", "destructive",
-    "overgrown", "blood-soaked", "rusted chains", "gore", "punk", "menacing", "horrifying",
-    "monstrous", "nightmarish", "bleak future", "warped", "ironclad", "horror",
-    "cybernetic", "cold", "frightening", "dismal", "scorched", "devastated",
-    "clawed", "mutant", "explosive", "barbaric", "intimidating", "toxic",
-    "iron", "battered", "chained", "brutal", "worn-out", "piercing", "vengeful",
-    "charred", "corrosive", "warrior", "destructive", "spiked", "fearsome"
+# list_embed_modifiers_prompts = ["rusty", "corroded", "dystopian", "cyberpunk", "eerie", "gothic", 
+#     "sinister", "abandoned", "shadowy", "grim", "blood-stained", "mechanical", "grimy", "haunting",
+#     "ominous", "distorted", "metallic", "dark", "gloomy", "vintage", "broken", "desolate",
+#     "violent", "war-torn", "industrial", "decayed", "creepy", "haunted", "murky", "grungy",
+#     "steampunk", "chaotic", "noir", "macabre", "bleak", "glitched", "disheveled", "barbed",
+#     "rundown", "twisted", "gruesome", "cluttered", "derelict", "bio-mechanical", "ominous glow",
+#     "alien", "jagged", "deformed", "demonic", "steely", "dark fantasy", "destructive",
+#     "overgrown", "blood-soaked", "rusted chains", "gore", "punk", "menacing", "horrifying",
+#     "monstrous", "nightmarish", "bleak future", "warped", "ironclad", "horror",
+#     "cybernetic", "cold", "frightening", "dismal", "scorched", "devastated",
+#     "clawed", "mutant", "explosive", "barbaric", "intimidating", "toxic",
+#     "iron", "battered", "chained", "brutal", "worn-out", "piercing", "vengeful",
+#     "charred", "corrosive", "warrior", "destructive", "spiked", "fearsome"
+# ]
+
+list_embed_modifiers_prompts = [
+    "hazy", "diffuse", "surreal", "colorful", "gradients", "rich tones", "delicate shading",
+    "halo-effect", "radiating", "dream-like", "background aura", "morphing periodontal",
+    "gingiva", "charcoal water", "liquid", "smudge", "dramatic", "coal", "bronze metal",
+    "evaporation", "steam", "shadows", "face", "transparent ropes", "glossy", "distorted body",
+    "strange", "weird", "disfigured", "reflection", "crystal", "broken glass", "mirror-like",
+    "neon entangled ropes", "fractured", "bright", "high-contrast", "sunrays", "otherworldly shapes",
+    "organic", "tongue", "trans-lucid", "morning light", "double-exposure", "sharp colors", 
+    "hazy", "glowing hue", "sunlight", "ethereal", "phantasmagoric", "psychedelic", "vivid",
+    "kaleidoscopic", "luminous", "opalescent", "translucent", "glittering", "shimmering",
+    "whimsical", "bizarre", "outlandish", "alien", "extraterrestrial", "chimeric", "hallucinatory",
+    "phantasmal", "incandescent", "brilliant", "spectral", "phantom-like", "diaphanous",
+    "gossamer", "lucent", "irradiated", "phantasm", "hypnotic", "mesmerizing", "saturated",
+    "blazing", "coruscating", "radiant", "resplendent", "prismatic", "lurid", "nebulous",
+    "misty", "opalescent", "dappled", "effulgent", "lambent", "refracted", "supernatural",
+    "polychromatic", "incandescent", "bioluminescent", "chiaroscuro", "tenebrous", "obscure",
+    "ethereal", "dystopian", "psychoactive", "transcendent", "extravagant", "baroque", "grotesque",
+    "glittering", "holographic", "nebular", "chromatic", "unearthly", "celestial", "astral",
+    "transdimensional", "cosmic", "stellar", "luminary", "blinding", "fiery", "opulent",
+    "rich", "flamboyant", "ornate", "elaborate", "lavish", "grandiose", "luxuriant",
+    "sumptuous", "extravagant", "rococo", "fantastical", "dreamscape", "nightmarish", "delirious",
+    "over-saturated", "blinding", "glaring", "blazing", "blinding light", "corona", "aura",
+    "wraith-like", "phantom-like", "gothic", "eldritch", "arcane", "mystical", "enchanting",
+    "bewitching", "spellbinding", "entrancing", "surrealistic", "hallucination", "nightmarish",
+    "eldritch horror", "supernatural glow", "luminescent", "eerie", "hauntingly beautiful",
+    "shadowy", "lurid glow", "neon-lit", "otherworldly light", "sublime", "enigmatic",
+    "fascinating", "mysterious", "uncanny", "cryptic", "arcane", "runic", "hieroglyphic",
+    "symbolic", "esoteric", "hermetic", "translucent", "transmorphic", "metamorphic", 
+    "shape-shifting", "mutative", "fluctuating", "amorphous", "polymorphic", "kaleidoscopic",
+    "psychedelic", "lysergic", "acidy", "trippy", "morphing", "shifting", "protean",
+    "multifarious", "complex", "labyrinthine", "serpentine", "convoluted", "twisting", 
+    "curving", "spiraling", "winding", "coiling", "serpentine", "snaking", "undulating",
+    "flowing", "liquid", "fluid", "molten", "viscous", "syrupy", "gelatinous", "slippery",
+    "oily", "greasy", "slick", "glossy", "shiny", "polished", "sleek", "smooth", "satin",
+    "silken", "velvety", "lush", "plush", "voluptuous", "richly textured", "opulently colored",
+    "deep hues", "vibrant shades", "brilliant tones", "radiant colors", "luminous shades",
+    "incandescent hues", "glowing tones", "brilliant lights", "shining beams", "glistening rays",
+    "radiating warmth", "sizzling energy", "scintillating flashes", "flickering luminescence",
+    "shimmering glow", "blazing brilliance", "flashing illuminations", "sparkling glints",
+    "dazzling gleams", "brilliant scintillations", "twinkling stars", "shimmering starlight",
+    "glistening dewdrops", "shining orbs", "glowing spheres", "radiant halos", "bright coronas",
+    "dazzling auras", "blinding glares", "burning flares", "fiery sparks", "radiant bursts",
+    "brilliant explosions", "blazing effulgence", "incandescent luminescence", "radiant brilliance",
+    "resplendent flashes", "flaring gleams", "dazzling illuminations", "shimmering brilliance"
 ]
 
 
-nmb_embed_modifiers = 5
+
+nmb_embed_modifiers = 8
 selected_modifiers = random.sample(list_embed_modifiers_prompts, nmb_embed_modifiers)
 selected_embeds = [pb.get_prompt_embeds(modifier) for modifier in selected_modifiers]
 
@@ -725,6 +796,11 @@ noodle_machine.create_noodle('kick', 'sound_embed_mod_3', init_value=1)
 noodle_machine.create_noodle('snare', 'sound_embed_mod_4', init_value=1)
 noodle_machine.create_noodle('osc5', 'sound_embed_mod_5', init_value=1)
 noodle_machine.create_noodle('osc6', 'sound_embed_mod_6', init_value=1)
+
+noodle_machine.create_noodle('v_left_hand', 'sound_embed_mod_left_hand', init_value=1, do_auto_scale=False)
+noodle_machine.create_noodle('v_right_hand', 'sound_embed_mod_right_hand', init_value=1, do_auto_scale=False)
+noodle_machine.create_noodle('v_mic', 'sound_embed_mod_mic', init_value=1, do_auto_scale=False)
+
 # noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
 # noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
 
@@ -743,8 +819,10 @@ noodle_machine.create_noodle('total_spread', 'mem_acid_mod')
 
 #%% 
 
-# right_hand = RigidBody(motive, "right_hand")
-# left_hand = RigidBody(motive, "left_hand")
+right_hand = RigidBody(motive, "right_hand")
+left_hand = RigidBody(motive, "left_hand")
+mic = RigidBody(motive, "mic")
+
 # center = RigidBody(motive, "center")
 # head = RigidBody(motive, "head")
 # right_foot = RigidBody(motive, "right_foot")
@@ -769,13 +847,42 @@ latents1 = pb.get_latents()
 latents2 = pb.get_latents()
 coords = np.zeros(3)
 
-do_kinematics = True
+do_kinematics_opiyo = False
+do_kinematics_ricardo = True
+
 last_render_timestamp = 0
 
 frame_count = 0
 while True:
     sender.send_message('\test', frame_count)
-    if do_kinematics:
+    
+    if do_kinematics_ricardo:
+        right_hand.update()
+        left_hand.update()
+        mic.update()
+        smoothing_win = int(midi_input.get("H0", val_min=1, val_max=10, val_default=1))
+        try:
+            
+            v_right_hand = np.linalg.norm(np.mean(right_hand.velocities[-smoothing_win:]))
+            v_left_hand = np.linalg.norm(np.mean(left_hand.velocities[-smoothing_win:]))
+            v_mic = np.linalg.norm(np.mean(mic.velocities[-smoothing_win:]))
+        except Exception as e:
+            v_right_hand = 0
+            v_left_hand = 0
+            v_mic = 0
+            print(e)
+        
+        # print(f"{v_right_hand} {v_left_hand} {v_mic}")
+        noodle_machine.set_cause('v_right_hand', v_right_hand)
+        noodle_machine.set_cause('v_left_hand', v_left_hand)
+        noodle_machine.set_cause('v_mic', v_mic)
+    
+    kill_button_xxx = midi_input.get("E4", button_mode="released_once")
+    if kill_button_xxx:
+        xxx
+    
+    
+    if do_kinematics_ricardo:
         # MOTIVE FOR PASTA tracking first
         # right_hand.update()
         # left_hand.update()
@@ -799,68 +906,72 @@ while True:
         #     position_history = position_history[:,not_nan,:]
         #     times = np.array(motive.list_timestamps[motive.pos_idx-pos_history_range:motive.pos_idx]) / 1000
         # masses = np.ones(len(positions))
-        masses = 1
-        # positions_l = position_history[pos_history_range//2]
-        # positions_ll = position_history[0]
-        positions = motive.positions[motive.pos_idx-1]
-        velocities = motive.velocities[motive.pos_idx-1]
-        not_nan = ~np.isnan(positions.sum(axis=1))
-        positions = positions[not_nan]
-        velocities = velocities[not_nan]
         
-        #!! remove later
-        # positions = positions[abs(velocities).sum(axis=1)>0.1]
-        # velocities = velocities[abs(velocities).sum(axis=1)>0.1]
-        # velocities = (positions - positions_l)/(times[-1] - times[pos_history_range//2])
-        # velocities_l = (positions_l - positions_ll)/(times[pos_history_range//2]-times[0])
-        # accelerations = (velocities - velocities_l)/(times[-1] - times[pos_history_range//2])
-        # center_of_mass = np.average(positions, axis=0, weights=masses)
-        center_of_mass = np.average(positions, axis=0)
-        rel_positions = positions - center_of_mass
-        # print(positions)
-        momenta = masses * velocities
-        angular_momenta = np.cross(rel_positions, momenta)
-        total_angular_momentum = angular_momenta.sum(axis=0)
-        absolute_angular_momentum = abs(total_angular_momentum).sum()
-        # kinetic_energies = 0.5 * masses * np.linalg.norm(velocities)**2
-        kinetic_energies = 0.5 * np.linalg.norm(velocities, axis=1)**2
-        total_kinetic_energy = kinetic_energies.sum()
-        total_kinetic_energy_sqrt = np.sqrt(total_kinetic_energy)
-        total_absolute_momentum = abs(momenta).sum()
-        noodle_machine.set_cause('total_absolute_momentum', total_absolute_momentum)
-        # potential_energy = center_of_mass[1] * masses.sum()
-        potential_energy = center_of_mass[1] #* masses.sum()
-        total_spread = np.linalg.norm(rel_positions, axis=1).sum()
-        noodle_machine.set_cause('total_spread', total_spread)
-        # print(positions)
-        # print(f'total angular momentum {total_angular_momentum}')
         try:
-            for part in list_body_parts:
-                total_kinetic_energy += part.kinetic_energies[-1]
+            masses = 1
+            # positions_l = position_history[pos_history_range//2]
+            # positions_ll = position_history[0]
+            positions = motive.positions[motive.pos_idx-1]
+            velocities = motive.velocities[motive.pos_idx-1]
+            not_nan = ~np.isnan(positions.sum(axis=1))
+            positions = positions[not_nan]
+            velocities = velocities[not_nan]
             
-            right_hand_y = right_hand.positions[-1][1]
-            left_hand_y = left_hand.positions[-1][1]
-            right_hand_x = right_hand.positions[-1][0]
-            left_hand_x = left_hand.positions[-1][0]
-            right_hand_z = right_hand.positions[-1][2]
-            left_hand_z = left_hand.positions[-1][2]
-            center_velocity = np.linalg.norm(center.velocities[-1])
-        except Exception as E:
-            # print(E)
-            right_hand_y = 0
-            left_hand_y = 0
-            right_hand_x = 0
-            left_hand_x = 0
-            right_hand_z = 0
-            left_hand_z = 0
-            center_velocity = 0
+            #!! remove later
+            # positions = positions[abs(velocities).sum(axis=1)>0.1]
+            # velocities = velocities[abs(velocities).sum(axis=1)>0.1]
             
-        # print(f'total_kinetic_energy: {total_kinetic_energy}')
-        noodle_machine.set_cause('right_hand_y', right_hand_y)
-        noodle_machine.set_cause('total_kinetic_energy', total_kinetic_energy)
-        # print(f'right_hand_y: {right_hand_y}')
-        # print(f'total_kinetic_energy: {total_kinetic_energy}')
-        
+            # velocities = (positions - positions_l)/(times[-1] - times[pos_history_range//2])
+            # velocities_l = (positions_l - positions_ll)/(times[pos_history_range//2]-times[0])
+            # accelerations = (velocities - velocities_l)/(times[-1] - times[pos_history_range//2])
+            # center_of_mass = np.average(positions, axis=0, weights=masses)
+            center_of_mass = np.average(positions, axis=0)
+            rel_positions = positions - center_of_mass
+            # print(positions)
+            momenta = masses * velocities
+            angular_momenta = np.cross(rel_positions, momenta)
+            total_angular_momentum = angular_momenta.sum(axis=0)
+            absolute_angular_momentum = abs(total_angular_momentum).sum()
+            # kinetic_energies = 0.5 * masses * np.linalg.norm(velocities)**2
+            kinetic_energies = 0.5 * np.linalg.norm(velocities, axis=1)**2
+            total_kinetic_energy = kinetic_energies.sum()
+            total_kinetic_energy_sqrt = np.sqrt(total_kinetic_energy)
+            total_absolute_momentum = abs(momenta).sum()
+            noodle_machine.set_cause('total_absolute_momentum', total_absolute_momentum)
+            # potential_energy = center_of_mass[1] * masses.sum()
+            potential_energy = center_of_mass[1] #* masses.sum()
+            total_spread = np.linalg.norm(rel_positions, axis=1).sum()
+            noodle_machine.set_cause('total_spread', total_spread)
+            # print(positions)
+            # print(f'total angular momentum {total_angular_momentum}')
+            try:
+                for part in list_body_parts:
+                    total_kinetic_energy += part.kinetic_energies[-1]
+                
+                right_hand_y = right_hand.positions[-1][1]
+                left_hand_y = left_hand.positions[-1][1]
+                right_hand_x = right_hand.positions[-1][0]
+                left_hand_x = left_hand.positions[-1][0]
+                right_hand_z = right_hand.positions[-1][2]
+                left_hand_z = left_hand.positions[-1][2]
+                center_velocity = np.linalg.norm(center.velocities[-1])
+            except Exception as E:
+                # print(E)
+                right_hand_y = 0
+                left_hand_y = 0
+                right_hand_x = 0
+                left_hand_x = 0
+                right_hand_z = 0
+                left_hand_z = 0
+                center_velocity = 0
+                
+            # print(f'total_kinetic_energy: {total_kinetic_energy}')
+            noodle_machine.set_cause('right_hand_y', right_hand_y)
+            noodle_machine.set_cause('total_kinetic_energy', total_kinetic_energy)
+            # print(f'right_hand_y: {right_hand_y}')
+            # print(f'total_kinetic_energy: {total_kinetic_energy}')
+        except:
+            print('nothing coming from tracking')
     
     
     # REST
@@ -918,6 +1029,10 @@ while True:
         amp_embed_mod4 = midi_input.get(f"D5", val_min=0, val_max=max_embed_mods, val_default=0)
         amp_embed_mod5 = midi_input.get(f"E5", val_min=0, val_max=max_embed_mods, val_default=0)
         
+        amp_embed_mod_left_hand = midi_input.get("F5", val_min=0, val_max=max_embed_mods, val_default=0)
+        amp_embed_mod_right_hand = midi_input.get("G5", val_min=0, val_max=max_embed_mods, val_default=0)
+        amp_embed_mod_mic = midi_input.get("H5", val_min=0, val_max=max_embed_mods, val_default=0)
+        
         weights_emb = []
         weights_emb.append(amp_embed_mod1 * noodle_machine.get_effect("sound_embed_mod_1"))
         weights_emb.append(amp_embed_mod2 * noodle_machine.get_effect("sound_embed_mod_2"))
@@ -925,6 +1040,13 @@ while True:
         weights_emb.append(amp_embed_mod4 * noodle_machine.get_effect("sound_embed_mod_4"))
         weights_emb.append(amp_embed_mod5 * noodle_machine.get_effect("sound_embed_mod_5"))
         
+        
+        ks = 10
+        weights_emb.append(ks*amp_embed_mod_left_hand * noodle_machine.get_effect("sound_embed_mod_left_hand"))
+        weights_emb.append(ks*amp_embed_mod_right_hand * noodle_machine.get_effect("sound_embed_mod_right_hand"))
+        weights_emb.append(ks*amp_embed_mod_mic * noodle_machine.get_effect("sound_embed_mod_mic"))
+        
+        # print(f"{weights_emb[-1]} {weights_emb[-2]} {weights_emb[-3]}")
         # for k in range(nmb_embed_modifiers):
             # weights_emb.append(midi_input.get(f"{chr(65 + k)}5", val_min=0, val_max=1, val_default=0, variable_name = f"embed {k}"))
         
@@ -1022,11 +1144,11 @@ while True:
         # embeds_mod_full = pb.get_prompt_embeds(prompt_embed_modifier)
         # print(f"new embed modifier: {prompt_embed_modifier} idx {idx_embed_mod}")
     
-    mask_radius = midi_input.get("E2", val_min=0, val_max=50, val_default=35)
-    decay_rate = np.sqrt(midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.92))
-    coord_scale = midi_input.get("E1", val_min=0.0, val_max=600, val_default=80)
+    mask_radius = midi_input.get("E2", val_min=0, val_max=50, val_default=8)
+    decay_rate = np.sqrt(midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.62))
+    coord_scale = midi_input.get("E1", val_min=0.0, val_max=600, val_default=330)
     # drawing_intensity = midi_input.get("D2", val_min=1, val_max=500, val_default=10)
-    drawing_intensity = midi_input.get("D2", val_min=0, val_max=1, val_default=0.2)
+    drawing_intensity = midi_input.get("D2", val_min=0, val_max=1, val_default=0.9)
     # drawing_noise_strength = midi_input.get("C1", val_min=0, val_max=100, val_default=10)
     use_underlay_image = midi_input.get("D3", button_mode="toggle")
     color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0.55)
@@ -1080,126 +1202,169 @@ while True:
             
             # xm = motive.get_last()['unlabeled_markers']
             # coord_array = np.array(list(xm.values()))
-            
-            
-            
-            
-            coord_array = positions.copy()
-            idx_lowest = np.argmin(coord_array[:,1])
-            coord_array -= coord_array[idx_lowest,:][None]
-            coord_array[:,1] = -coord_array[:,1]
-            
-            # coord_array = np.array([[left_hand_x, left_hand_y, left_hand_z], [right_hand_x, right_hand_y, right_hand_z]])
-
-            # rigid body positions
-            # xm = motive.get_last()['rigid_bodies']
-            # coord_array = np.array([v['position'] for v in xm.values()])
-            
-            
-            # coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
-            # coord_offset = np.array([0,3,3])[None]
-            # coord_offset = np.array([0,1.5,1])[None]
-            # coord_offset = np.array([0,130,280])[None]   # screen center
-            coord_offset = np.array([0,240,280])[None]
-            # coord_offset = np.array([0,280,280])[None]
-            
-            if len(coord_array) > 0:
+            try:
+                outliers = detect_outliers(positions)
+                positions = positions[~outliers]
                 
-                coord_array[:,1:] *= coord_scale
-                coord_array += coord_offset
+                nr_clusters = 2
+                # positions = positions[positions[:,1] < 2]
                 
-                if False:
-                    coord_array[:,1] = -coord_array[:,1]
-                    x_distance = coord_array[:,0].copy()
-                    y_distance = coord_array[0,:].copy()
+                labels, centroids = kmeans(positions, nr_clusters)
+                
+                if centroids[0,0] > centroids[1,0]:
+                    labels = 1 - labels
+                
+                idx_spine0 = np.where(labels==0)[0]
+                idx_spine1 = np.where(labels==1)[0]
+    
+                spine0 = positions[labels==0]
+                spine1 = positions[labels==1]
+                
+                coord_array = positions.copy()            
+    
+                # idx_lowest = np.argmin(coord_array[:,1])
+                # coord_array -= coord_array[idx_lowest,:][None]
+    
+                if len(idx_spine0) > 0:
+                    idx_lowest = np.argmin(spine0[:,1])
+                    spine0 -= spine0[idx_lowest,:][None]
+                    coord_array[idx_spine0] = spine0
+    
+                if len(idx_spine1) > 0:
+                    idx_lowest = np.argmin(spine1[:,1])
+                    spine1 -= spine1[idx_lowest,:][None]
+                    coord_array[idx_spine1] = spine1
                     
-                    x_mean_dist = x_distance.mean() 
-                    if x_mean_dist < 0:
-                        x_mean_dist = 0
-                    y_mean_dist = y_distance.mean() 
-                    if y_mean_dist < 0:
-                        y_mean_dist = 0
+                coord_array[:,1] = -coord_array[:,1]
+                
+                # coord_array = np.array([[left_hand_x, left_hand_y, left_hand_z], [right_hand_x, right_hand_y, right_hand_z]])
+    
+                # rigid body positions
+                # xm = motive.get_last()['rigid_bodies']
+                # coord_array = np.array([v['position'] for v in xm.values()])
+                
+                
+                # coord_scale = midi_input.get("E1", val_min=0.0, val_max=100, val_default=75)
+                # coord_offset = np.array([0,3,3])[None]
+                # coord_offset = np.array([0,1.5,1])[None]
+                # coord_offset = np.array([0,130,280])[None]   # screen center
+                # coord_offset = np.array([0,280,280])[None]
+                
+                coord_offset_spine0 = np.array([0,230,185])[None]
+                coord_offset_spine1 = np.array([0,230,405])[None]
+                # coord_offset_spine0 = np.array([0,240,200])[None]
+                # coord_offset_spine1 = np.array([0,240,420])[None]
+                
+                if len(coord_array) > 0:
                     
                     coord_array[:,1:] *= coord_scale
-                    # coord_array[:,1:] *= x_mean_dist * 100
                     
-                    # coord_offset = np.array([0,y_mean_dist*canvas.shape[0],x_mean_dist*canvas.shape[1]])
+                    if len(idx_spine0) > 0:
+                        coord_array[idx_spine0] += coord_offset_spine0
                     
-                    coord_array += coord_offset
-                
-                coord_array[coord_array < 0] = 0
+                    if len(idx_spine1) > 0:
+                        coord_array[idx_spine1] += coord_offset_spine1
                     
-                coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
-                coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
-                
-                
-                coord_array = coord_array.astype(np.int32)
-                
-                # print(f'x_mean_dist {x_mean_dist}')
-                
-                # Mask parameters
-                # mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
-                # constant_hue = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0)
-                
-    
-                
-                # decay canvas
-                canvas = canvas * decay_rate
-                
-                # Create a grid of coordinates
-                Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
-                X = X.float()
-                Y = Y.float()
-                
-                # canvas = blur_kernel(canvas.permute([2,0,1])[None])
-                # canvas = canvas[0].permute([1,2,0])
-                
-                # color_vec = torch.zeros((1,1,3), device=latents.device)
-                # color_vec[0,0,:] = torch.rand(3).cuda()*10
-                # print(f'color_vec {color_vec}')
-                # print(f'coord_array {coord_array[:,0]}')
-                
-                for idx, coord in enumerate(coord_array):
-                    # marker drop
-                    # color_angle = float(coord_array[idx,0]*1)
-                    # color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0)
-                    color_vec = angle_to_rgb(color_angle)
-                    color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
-                    
-                    if use_underlay_image:
-                        color_vec[:] = 1
+                    if False:
+                        coord_array[:,1] = -coord_array[:,1]
+                        x_distance = coord_array[:,0].copy()
+                        y_distance = coord_array[0,:].copy()
                         
-                    color_vec[:] = 1
+                        x_mean_dist = x_distance.mean() 
+                        if x_mean_dist < 0:
+                            x_mean_dist = 0
+                        y_mean_dist = y_distance.mean() 
+                        if y_mean_dist < 0:
+                            y_mean_dist = 0
+                        
+                        coord_array[:,1:] *= coord_scale
+                        # coord_array[:,1:] *= x_mean_dist * 100
+                        
+                        # coord_offset = np.array([0,y_mean_dist*canvas.shape[0],x_mean_dist*canvas.shape[1]])
+                        
+                        coord_array += coord_offset
                     
-                    patch = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius)
-                    if use_underlay_image:
-                        colors = patch.unsqueeze(2)*color_vec[None][None]
-                    else:
-                        colors = patch.unsqueeze(2)*noise_patch*color_vec[None][None]
+                    coord_array[coord_array < 0] = 0
+                        
+                    coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
+                    coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
+                    
+                    
+                    coord_array = coord_array.astype(np.int32)
+                    
+                    # print(f'x_mean_dist {x_mean_dist}')
+                    
+                    # Mask parameters
+                    # mask_radius = 5      # Radius of the circle is 25 pixels for a 50 pixels diameter
+                    # constant_hue = midi_input.get("E0", val_min=0.0, val_max=1, val_default=0)
+                    
         
-                    # Add the color gradient to the image
-                    colors /= (colors.max() + 0.0001)
-                    canvas += colors * drawing_intensity * 255
-                    canvas = canvas.clamp(0, 255)
-                # canvas = torch.roll(canvas, -1, dims=[0])
-            else:
-                print('cant see markers')
-
-            # print(f'canvas_max: {canvas.max()}')
-            # Ensure values remain within the 0-255 range after addition
-            canvas_numpy = canvas.cpu().numpy()
-            canvas_numpy = np.clip(canvas_numpy, 0, 255)
+                    
+                    # decay canvas
+                    canvas = canvas * decay_rate
+                    
+                    # Create a grid of coordinates
+                    Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
+                    X = X.float()
+                    Y = Y.float()
+                    
+                    # canvas = blur_kernel(canvas.permute([2,0,1])[None])
+                    # canvas = canvas[0].permute([1,2,0])
+                    
+                    # color_vec = torch.zeros((1,1,3), device=latents.device)
+                    # color_vec[0,0,:] = torch.rand(3).cuda()*10
+                    # print(f'color_vec {color_vec}')
+                    # print(f'coord_array {coord_array[:,0]}')
+                    
+                    for idx, coord in enumerate(coord_array):
+                        # marker drop
+                        # color_angle = float(coord_array[idx,0]*1)
+                        # color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0)
+                        color_vec = angle_to_rgb(color_angle)
+                        color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
+                        
+                        if use_underlay_image:
+                            color_vec[:] = 1
+                            
+                        color_vec[:] = 0.5
+                        if labels[idx] == 1:
+                            color_vec[0] = 1
+                        else:
+                            color_vec[1] = 1
+                        
+                        patch = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius)
+                        if use_underlay_image:
+                            colors = patch.unsqueeze(2)*color_vec[None][None]
+                        else:
+                            colors = patch.unsqueeze(2)*noise_patch*color_vec[None][None]
             
-            
-            if use_underlay_image:
-                canvas_numpy /= 255
-                img_drive = underlay_image * canvas_numpy
-                img_drive = img_drive.astype(np.uint8)
-            else:
-                img_drive = canvas_numpy
+                        # Add the color gradient to the image
+                        colors /= (colors.max() + 0.0001)
+                        canvas += colors * drawing_intensity * 255
+                        canvas = canvas.clamp(0, 255)
+                    # canvas = torch.roll(canvas, -1, dims=[0])
+                else:
+                    print('cant see markers')
+    
+                # print(f'canvas_max: {canvas.max()}')
+                # Ensure values remain within the 0-255 range after addition
+                canvas_numpy = canvas.cpu().numpy()
+                canvas_numpy = np.clip(canvas_numpy, 0, 255)
                 
-            # print(f'max img_drive {img_drive.max()}')
-            
+                
+                if use_underlay_image:
+                    canvas_numpy /= 255
+                    img_drive = underlay_image * canvas_numpy
+                    img_drive = img_drive.astype(np.uint8)
+                else:
+                    img_drive = canvas_numpy
+                    
+                # print(f'max img_drive {img_drive.max()}')
+            except Exception as e:
+                print(f'exception noo coords {e}')
+                img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
+                img_drive = np.flip(img_drive, axis=2)                
+                pass
                 
         else:
             # speed_movie += int(av_router.get_modulation('acid'))
@@ -1277,6 +1442,10 @@ while True:
     # hue_rot_gain = midi_input.get("H0", val_min=0, val_max=1, val_default=0)
     # hue_rot = 100 * hue_rot_gain * hue_rot_mod
     # img_mix = rotate_hue(img_mix, hue_rot)
+    
+    if do_fullscreen:
+        cv2.namedWindow('lunar_render_window', cv2.WND_PROP_FULLSCREEN)
+        cv2.setWindowProperty('lunar_render_window',cv2.WND_PROP_FULLSCREEN,cv2.WINDOW_FULLSCREEN)
     
     if do_debug_verlay and use_image2image:
         secondary_renderer.render(img_drive)

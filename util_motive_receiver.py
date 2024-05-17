@@ -20,7 +20,7 @@ class MarkerTracker:
         self.sleep_time = 0.000001
         self.list_raw_packets = []
         self.list_dict_packets = []
-        self.rigid_body_labels = ["left_hand", "right_hand", "head", "center", "right_foot", "left_foot"]
+        self.rigid_body_labels = ["left_hand", "right_hand", "head", "center", "right_foot", "left_foot", "mic"]
         
         # self.list_dict_unlabeled_markers = []
         
@@ -428,7 +428,6 @@ class MarkerTracker:
 class RigidBody:
     def __init__(self, motive, label, mass=1000):
         self.motive = motive
-        assert label in motive.rigid_body_labels, f"label has to be within: {motive.rigid_body_labels}"
         self.label = label
         self.orientations = []
         self.positions = []
@@ -504,47 +503,6 @@ class RigidBody:
                 self.forces.append(last_force)
                 self.kinetic_energies.append(last_kinetic_energy)
 
-        # # Calculate angular velocity and angular acceleration from orientations
-        # if len(self.orientations) > 1:
-        #     # Calculate angular velocity (difference in orientation between consecutive frames)
-        #     angular_velocity = self.orientations[-1] - self.orientations[-2]
-        #     self.angular_velocities.append(angular_velocity)
-            
-        #     if len(self.angular_velocities) > 1:
-        #         # Calculate angular acceleration (difference in angular velocity between consecutive frames)
-        #         angular_acceleration = self.angular_velocities[-1] - self.angular_velocities[-2]
-        #         self.angular_accelerations.append(angular_acceleration)
-        # else:
-        #     try:
-        #         last_angular_velocity = self.angular_velocities[-1] if self.angular_velocities else np.array([0, 0, 0])
-        #         last_angular_acceleration = self.angular_accelerations[-1] if self.angular_accelerations else np.array([0, 0, 0])
-        #     except IndexError:  # In case the lists are empty and accessing -1 fails
-        #         last_angular_velocity = np.array([0, 0, 0])
-        #         last_angular_acceleration = np.array([0, 0, 0])
-
-        #     if len(self.orientations) > self.buffer_size:
-        #         self.orientations.pop(0)
-        #     if len(self.angular_velocities) > self.buffer_size:
-        #         self.angular_velocities.pop(0)
-        #     if len(self.angular_accelerations) > self.buffer_size:
-        #         self.angular_accelerations.pop(0)
-
-        #     self.angular_velocities.append(last_angular_velocity)
-        #     self.angular_accelerations.append(last_angular_acceleration)
-
-# def compute_sq_distances(a, b):
-#     # Calculate differences using broadcasting
-#     diff = a[:, np.newaxis, :] - b[np.newaxis, :, :]
-#     # Calculate squared Euclidean distances
-#     dist_squared = np.sum(diff ** 2, axis=2)
-#     ## Take square root to get Euclidean distances
-#     # distances = np.sqrt(dist_squared)
-    
-#     # Create dictionary to store dist_squared with index pairs
-#     distance_dict = {(i_a, i_b): dist_squared[i_a, i_b] for i_a in range(dist_squared.shape[0]) for i_b in range(dist_squared.shape[1])}
-#     distance_dict = dict(sorted(distance_dict.items(), key=lambda item: item[1]))
-#     return distance_dict
-
 def compute_sq_distances(a, b):
     # Calculate differences using broadcasting
     diff = a[:, np.newaxis, :] - b[np.newaxis, :, :]
@@ -558,258 +516,26 @@ def compute_sq_distances(a, b):
     distance_dict = dict(sorted(distance_dict.items(), key=lambda item: item[1]))
     return distance_dict
 
+
 if __name__ == "__main__":
-    motive = MarkerTracker('192.168.50.64')
+    motive = MarkerTracker('192.168.50.64', process_list=['rigid_bodies'])
     
-    # last_frame_id = 0
-    # list_labels = []
-    # dict_label_idx = {}
-    # set_labels = set()
-    # list_unlabeled = []
-    # list_timestamps = []
+    left_hand = RigidBody(motive, "left_hand")
+    right_hand = RigidBody(motive, "right_hand")
+    mic = RigidBody(motive, "mic")
     
-    # max_nr_markers = 10
-    # max_buffer_size = 10000
-    # positions = np.zeros([max_buffer_size, max_nr_markers, 3])*np.nan
-    # velocities = np.zeros([max_buffer_size, max_nr_markers, 3])
-    # pos_idx = 0
-    
-    # last_timestamp = None
-    
-    
-    # for _ in range(10000):
-    #     time.sleep(0.01)
-    #     #%%
-    #     last_package = motive.get_last()
-    #     if last_package is not None:
-    #         if not last_package['frame_id'] == last_frame_id:
-    #             last_frame_id = last_package['frame_id'] 
-    #             timestamp = int(last_package['frame_id'])
-    #             list_timestamps.append(timestamp)
-    #             dict_unlabeled = last_package['unlabeled_markers'] 
-    #             current_labels = dict_unlabeled.keys()
-                
-    #             if not list_labels:
-    #                 list_labels = list(current_labels)[:max_nr_markers]
-    #                 set_labels = set(list_labels)
-    #                 new_positions = np.array([dict_unlabeled[k] for k in list_labels])
-    #                 positions[pos_idx,:len(list_labels),:] = new_positions
-    #                 dict_label_idx = dict(zip(list_labels,range(len(current_labels))))
-    #             else:                   
-    #                 set_current_labels = set(current_labels)
-    #                 set_labels = set(list_labels)
-    #                 set_missing_labels = set_labels - set_current_labels
-    #                 list_missing_labels = list(set_missing_labels)
-    #                 set_new_labels = set_current_labels - set_labels
-    #                 list_new_labels = list(set_new_labels)
-                    
-    #                 list_known_labels = list(set_current_labels.intersection(set_labels))
-    #                 print(f'known {list_known_labels}')
-    #                 print(f'missing {list_missing_labels}')
-    #                 print(f'new {list_new_labels}')
-    #                 if list_known_labels:
-    #                     list_known_idx = [dict_label_idx[l] for l in list_known_labels]
-    #                     list_known_idx.sort()
-    #                     known_positions = np.array([dict_unlabeled[k] for k in list_known_labels])
-    #                     positions[pos_idx, list_known_idx, :] = known_positions
-    #                     assert pos_idx
-    #                     dt = (timestamp - last_timestamp)/1000
-    #                     velocities[pos_idx,list_known_idx,:] = (positions[pos_idx,list_known_idx,:] - positions[pos_idx-1,list_known_idx,:])/dt
-                    
-    #                 dict_unlabeled_last = list_unlabeled[-1]
-    #                 if list_missing_labels and list_new_labels:
-    #                     print('uggggg')
-    #                     list_missing_idx = [dict_label_idx[l] for l in list_missing_labels]
-    #                     missing_positions = positions[pos_idx-1, list_missing_idx, :]
-    #                     assert not np.isnan(missing_positions[0,0])
-    #                     # missing_positions = np.array([dict_unlabeled_last[k] for i, k in enumerate(list_missing_labels)])
-    #                     new_positions = np.array([dict_unlabeled[k] for i, k in enumerate(list_new_labels)])
-    #                     sq_distances = compute_sq_distances(missing_positions, new_positions)
-    #                     # xx
-    #                     for i in sq_distances.keys():
-    #                         missing_idx = i[0]
-    #                         new_idx = i[1]
-    #                         # missing_pos = missing_positions[missing_idx]
-    #                         missing_label = list_missing_labels[missing_idx]
-    #                         new_label = list_new_labels[new_idx]
-    #                         if missing_label in set_missing_labels and new_label in set_new_labels:
-    #                             new_pos = new_positions[new_idx]
-    #                             marker_idx = dict_label_idx[missing_label]
-    #                             positions[pos_idx, marker_idx, :] = new_pos
-    #                             dict_label_idx[new_label] = dict_label_idx[missing_label]
-    #                             del dict_label_idx[missing_label]
-    #                             set_missing_labels.remove(missing_label)
-    #                             set_new_labels.remove(new_label)
-    #                             print(set_missing_labels)
-    #                             if not set_new_labels or not set_missing_labels:
-    #                                 break
-    #                 if set_missing_labels: # fill last values
-    #                     print('here')
-    #                     list_missing_idx = [dict_label_idx[ml] for ml in set_missing_labels]
-    #                     positions[pos_idx,list_missing_idx,:] = positions[pos_idx-1,list_missing_idx,:]
-                            
-    #             # dict_unlabeled_last = dict_unlabeled
-    #             list_labels = list(dict_label_idx.keys())
-    #             list_unlabeled.append(dict_unlabeled)
-    #             pos_idx += 1
-    #             last_timestamp = timestamp
-
-
-
-#%%
-#                 # set_labels = set_labels.union(new_labels)
-#                 # print(f'new: {len(new_labels)}, missing: {len(missing_labels)}')
-#                 # print(dict_unlabeled)
-#                 # if len(missing_labels):
-#                 #     xx
-#     #     left_hand.update()
-        
-    #     print(right_hand.positions)
-    
-        
-    
-# import numpy as np
-
-
-
-    
-#%%    
-    
-    # list_positions = []
-    # list_velocities = []
-    # maxlen = 1e6
-    # masses = 1e3
-    # time.sleep(1)
-    
-    # xm = motive.get_last()['labeled_markers']
-    # positions = np.array(list(xm.values()))
-    # nmb_markers = positions.shape[0]
-    
-    # params_rigid_bodies = motive.get_last()['rigid_bodies']
-    
-    # dict_list_positions = {}
-    # dict_list_velocities = {}
-    # dict_list_kinetic_energies = {}       
-    # dict_masses = {}
-    
-    # rigid_body_labels = params_rigid_bodies.keys()
-    # for body_label in rigid_body_labels:
-    #     dict_list_positions[body_label] = []
-    #     dict_list_velocities[body_label] = []    
-    
-        
-    # marker_ids = []
-    
-    # while True:
-    #     # continue
-    #     # xm = np.array(list(motive.get_last()['rigid_bodies'].values())))
-    #     xm = motive.get_last()['labeled_markers']
-        
-    #     marker_ids = list(xm.keys())
-        
-    #     params_rigid_bodies = motive.get_last()['rigid_bodies']
-        
-    #     # do rigid body by rigid body computation
-    #     if True:
+    while True:
+        right_hand.update()
+        left_hand.update()
+        mic.update()
+        try:
+            v_right_hand = np.linalg.norm(right_hand.velocities[-1])
+            v_left_hand = np.linalg.norm(left_hand.velocities[-1])
+            v_mic = np.linalg.norm(mic.velocities[-1])
+        except Exception as e:
+            v_right_hand = 0
+            v_left_hand = 0
+            v_mic = 0
             
-    #         for idx, body_label in enumerate(rigid_body_labels):
-    #             positions = np.array(params_rigid_bodies[body_label]['position'])
-                
-    #             # positions = coords
-    #             dict_list_positions[body_label].append(positions)
-    #             if len(dict_list_positions[body_label]) > 2:
-    #                 velocities = dict_list_positions[body_label][-1] - dict_list_positions[body_label][-2]
-    #                 dict_list_velocities[body_label].append(velocities)
-    #                 if len(dict_list_velocities[body_label]) > 2:
-    #                     accelerations = dict_list_velocities[body_label][-1] - dict_list_velocities[body_label][-2]
-                        
-    #                 # forces = masses * accelerations
-    #                 # center_of_mass = np.average(positions, axis=0, weights=masses[:,0])
-    #                 # center_of_mass = np.average(positions, axis=0)
-    #                 # potential_energy = center_of_mass * total_mass # check xy
-    #                 # rel_positions = positions - center_of_mass
-    #                 # momenta = masses * velocities
-    #                 # angular_momenta = np.cross(rel_positions, momenta) # gives scales for 2D!
-    #                 # total_angular_momentum = angular_momenta.sum(axis=0)
-                    
-    #                 kinetic_energies = 0.5 * masses * np.linalg.norm(velocities)**2
-    #                 dict_list_kinetic_energies[body_label] = kinetic_energies.sum(axis=0)
-                    
-    #                 # print(f'positions {positions}')
-    #                 print(f"total_kinetic_energy: {body_label} {dict_list_kinetic_energies[body_label]}")          
-        
-        
-        
-        
-    #     time.sleep(0.1)
-        
-        # masses = np.abs(np.random.randn(len(positions),1))
-        # masses = 70 * masses / masses.sum()
-        # total_mass = masses.sum()
-        
-        # positions = coords
-        # list_positions.append(positions.copy())
-        
-        # for marker_id in marker_ids:
-        #     list_positions = dict_list_positions[marker_id]
-        
-        
-        # if len(list_positions) > 2:
-        #     velocities = list_positions[-1] - list_positions[-2]
-        #     list_velocities.append(velocities)
-        #     if len(list_velocities) > 2:
-        #         accelerations = list_velocities[-1] - list_velocities[-2]
-        #         forces = masses * accelerations
-        #         center_of_mass = np.average(positions, axis=0, weights=masses[:,0])
-        #         # center_of_mass = np.average(positions, axis=0)
-        #         potential_energy = center_of_mass * total_mass # check xy
-        #         rel_positions = positions - center_of_mass
-        #         momenta = masses * velocities
-        #         angular_momenta = np.cross(rel_positions, momenta) # gives scales for 2D!
-        #         total_angular_momentum = angular_momenta.sum(axis=0)
-                
-        #         kinetic_energies = 0.5 * masses * np.linalg.norm(velocities, axis=1)**2
-        #         total_kinetic_energy = kinetic_energies.sum(axis=0)
-                
-        #         # print(f"positions {positions}")
-        #         print(f"total_kinetic_energy {np.mean(total_kinetic_energy)}")
-            
-
-        
-      
-            
-    
-    # max_height = positions[:,1].max() - positions[:,1].min() # y extension (check!)
-        
-
-    
-    
-    
-    # while True:
-    #     time.sleep(1)  # Main thread can perform other tasks or just sleep
-    #     print(len(marker_tracker.get_marker_data()))  # Output the current buffer size
-    #     # print(len(marker_tracker.list_raw_frames))  # Output the current buffer size
-
-
-"""
-            
-        
-        # List of marker names in order
-        self.marker_labels = [
-            "HeadTop", "HeadFront", "HeadSide",
-            "BackTop", "BackLeft", "BackRight",
-            "Chest",
-            "LShoulderTop", "LShoulderBack", "LUArmHigh",
-            "LElbowOut", "LWristOut", "LWristIn",
-            "LHandOut",
-            "RShoulderTop", "RShoulderBack", "RUArmHigh",
-            "RElbowOut", "RWristOut", "RWristIn",
-            "RHandOut",
-            "WaistLFront", "WaistLBack", "WaistRBack", "WaistRFront",
-            "LThigh", "LKneeOut", "LShin", "LAnkleOut",
-            "LHeel", "LToeIn", "LToeTip", "LToeOut",
-            "RThigh", "RKneeOut", "RShin", "RAnkleOut",
-            "RHeel", "RToeIn", "RToeTip", "RToeOut"
-        ]
-
-"""
+        print(f"{v_right_hand} {v_left_hand} {v_mic}")
+        time.sleep(0.1)
