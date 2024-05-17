@@ -144,7 +144,7 @@ if __name__ == "__main__":
     # width = 512
     height = 512
     num_inference_steps = 1
-    gpt_model = "gpt-4"
+    gpt_model = "gpt-4o"
     
     pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16").to("cuda")
     gh = GradioHolder(pipe, gpt_model=gpt_model)
