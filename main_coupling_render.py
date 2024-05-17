@@ -1476,7 +1476,11 @@ while True:
         if mem_acid > 1:
             mem_acid = 1
         # print(f'mem_acid {mem_acid}')
-
+        rotation_angle_left = midi_input.get("C0", val_min=0, val_max=90, val_default=0)
+        rotation_angle_right = midi_input.get("D0", val_min=0, val_max=90, val_default=0)
+        rotation_angle = rotation_angle_left - rotation_angle_right
+        if rotation_angle < 0:
+            rotation_angle = 360 + rotation_angle
         if prev_diffusion_output is not None:
             prev_diffusion_output = np.array(prev_diffusion_output)
             prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
@@ -1485,6 +1489,16 @@ while True:
                 prev_diffusion_output = zoom_image_torch(prev_diffusion_output, zoom_factor)
                 prev_diffusion_output = prev_diffusion_output.cpu().numpy()
             
+            
+            if rotation_angle > 0:
+                prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe_img2img.device)
+                padding = int(prev_diffusion_output.shape[1] // (2*np.sqrt(2)))
+                padding = (padding, padding)
+                prev_diffusion_output = T.Pad(padding=padding, padding_mode='reflect')(prev_diffusion_output.permute(2,0,1))
+                prev_diffusion_output = T.functional.rotate(prev_diffusion_output, angle=rotation_angle, interpolation=T.functional.InterpolationMode.BILINEAR, expand=False).permute(1,2,0)
+                prev_diffusion_output = prev_diffusion_output[padding[0]:prev_diffusion_output.shape[0]-padding[0],padding[1]:prev_diffusion_output.shape[1]-padding[1]]
+                prev_diffusion_output = prev_diffusion_output.cpu().numpy()
+                
             image_init = image_init.astype(np.float32) * (1-mem_acid) + mem_acid*prev_diffusion_output.astype(np.float32)
             image_init = image_init.astype(np.uint8)
             
