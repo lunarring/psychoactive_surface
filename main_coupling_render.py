@@ -70,7 +70,7 @@ width_latents = int(np.round(width_latents/16)*16)
 height_latents = int(np.round(height_latents/16)*16)
 shape_cam=(600,800) 
 
-dir_prompts = "prompts_ricardo"
+dir_prompts = "prompts"
 
 
 #%% aux func
