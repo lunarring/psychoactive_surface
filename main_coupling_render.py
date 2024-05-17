@@ -847,8 +847,8 @@ latents1 = pb.get_latents()
 latents2 = pb.get_latents()
 coords = np.zeros(3)
 
-do_kinematics_opiyo = False
-do_kinematics_ricardo = True
+do_kinematics_opiyo = True
+do_kinematics_ricardo = False
 
 last_render_timestamp = 0
 
@@ -882,7 +882,7 @@ while True:
         xxx
     
     
-    if do_kinematics_ricardo:
+    if do_kinematics:
         # MOTIVE FOR PASTA tracking first
         # right_hand.update()
         # left_hand.update()
@@ -944,32 +944,34 @@ while True:
             noodle_machine.set_cause('total_spread', total_spread)
             # print(positions)
             # print(f'total angular momentum {total_angular_momentum}')
-            try:
-                for part in list_body_parts:
-                    total_kinetic_energy += part.kinetic_energies[-1]
-                
-                right_hand_y = right_hand.positions[-1][1]
-                left_hand_y = left_hand.positions[-1][1]
-                right_hand_x = right_hand.positions[-1][0]
-                left_hand_x = left_hand.positions[-1][0]
-                right_hand_z = right_hand.positions[-1][2]
-                left_hand_z = left_hand.positions[-1][2]
-                center_velocity = np.linalg.norm(center.velocities[-1])
-            except Exception as E:
-                # print(E)
-                right_hand_y = 0
-                left_hand_y = 0
-                right_hand_x = 0
-                left_hand_x = 0
-                right_hand_z = 0
-                left_hand_z = 0
-                center_velocity = 0
-                
-            # print(f'total_kinetic_energy: {total_kinetic_energy}')
-            noodle_machine.set_cause('right_hand_y', right_hand_y)
-            noodle_machine.set_cause('total_kinetic_energy', total_kinetic_energy)
-            # print(f'right_hand_y: {right_hand_y}')
-            # print(f'total_kinetic_energy: {total_kinetic_energy}')
+            
+            if do_kinematics_ricardo:
+                try:
+                    for part in list_body_parts:
+                        total_kinetic_energy += part.kinetic_energies[-1]
+                    
+                    right_hand_y = right_hand.positions[-1][1]
+                    left_hand_y = left_hand.positions[-1][1]
+                    right_hand_x = right_hand.positions[-1][0]
+                    left_hand_x = left_hand.positions[-1][0]
+                    right_hand_z = right_hand.positions[-1][2]
+                    left_hand_z = left_hand.positions[-1][2]
+                    center_velocity = np.linalg.norm(center.velocities[-1])
+                except Exception as E:
+                    # print(E)
+                    right_hand_y = 0
+                    left_hand_y = 0
+                    right_hand_x = 0
+                    left_hand_x = 0
+                    right_hand_z = 0
+                    left_hand_z = 0
+                    center_velocity = 0
+                    
+                # print(f'total_kinetic_energy: {total_kinetic_energy}')
+                noodle_machine.set_cause('right_hand_y', right_hand_y)
+                noodle_machine.set_cause('total_kinetic_energy', total_kinetic_energy)
+                # print(f'right_hand_y: {right_hand_y}')
+                # print(f'total_kinetic_energy: {total_kinetic_energy}')
         except:
             print('nothing coming from tracking')
     
