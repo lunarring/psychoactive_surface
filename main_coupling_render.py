@@ -46,7 +46,7 @@ REFACTOR OPS
 """
 #%% VARS
 do_compile = True
-res_fact = 1.5
+res_fact = 1.0
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
 width_renderer = 1920
@@ -70,7 +70,7 @@ width_latents = int(np.round(width_latents/16)*16)
 height_latents = int(np.round(height_latents/16)*16)
 shape_cam=(600,800) 
 
-dir_prompts = "prompts"
+dir_prompts = "prompts_ricardo"
 
 
 #%% aux func
@@ -851,7 +851,7 @@ latents2 = pb.get_latents()
 coords = np.zeros(3)
 
 do_kinematics = True
-do_kinematics_ricardo = False
+do_kinematics_ricardo = True
 
 last_render_timestamp = 0
 
@@ -889,7 +889,7 @@ while True:
         # MOTIVE FOR PASTA tracking first
         # right_hand.update()
         # left_hand.update()
-        # right_foot.update()
+        # right_foot.update()111119999
         # left_foot.update()
         # center.update()
         # head.update()
@@ -1025,7 +1025,7 @@ while True:
     
     enable_embed_mod = midi_input.get("A3", button_mode="toggle")
     kill_embed_weights = midi_input.get("C3", button_mode="toggle")
-    max_embed_mods = midi_input.get("A2", val_min=0.3, val_max=2.5, val_default=0.8)
+    max_embed_mods = midi_input.get("A2", val_min=0.3, val_max=12.5, val_default=0.8)
     if enable_embed_mod:
         
         amp_embed_mod1 = midi_input.get(f"A5", val_min=0, val_max=max_embed_mods, val_default=0)

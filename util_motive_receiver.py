@@ -24,9 +24,9 @@ class MarkerTracker:
         
         # self.list_dict_unlabeled_markers = []
         
-        self.process_list = ["rigid_bodies"]
-        self.process_list = ["rigid_bodies", "unlabeled_markers", "velocities"]
-        self.process_list = ["unlabeled_markers", "velocities"]
+        # self.process_list = ["rigid_bodies"]
+        # self.process_list = ["rigid_bodies", "unlabeled_markers", "velocities"]
+        self.process_list = ["unlabeled_markers", "velocities", "rigid_bodies"]
         self.process_list = process_list
         
         self.v_last_time = 0
@@ -38,7 +38,7 @@ class MarkerTracker:
         self.list_unlabeled = []
         self.list_timestamps = []
         
-        self.max_nr_markers = 22
+        self.max_nr_markers = 99
         self.positions = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])*np.nan
         self.velocities = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])
         self.pos_idx = 0
