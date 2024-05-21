@@ -46,11 +46,12 @@ REFACTOR OPS
 """
 #%% VARS
 do_compile = True
-res_fact = 1.0
+res_fact = 1.5
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
 width_renderer = 1920
 height_renderer = 1080
+height_renderer = 1200
 
 size_img_tiles_hw = (120, 260)   # tile image size
 nmb_rows, nmb_cols = (7,7)       # number of tiles
@@ -60,7 +61,7 @@ dir_embds_imgs = "embds_imgs"
 show_osc_visualization = True
 use_cam = False
 do_fullscreen = False
-
+do_raw_kids_drawing = False
 
 # key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
 
@@ -69,8 +70,7 @@ do_fullscreen = False
 width_latents = int(np.round(width_latents/16)*16)
 height_latents = int(np.round(height_latents/16)*16)
 shape_cam=(600,800) 
-
-dir_prompts = "prompts_ricardo"
+dir_prompts = "prompts_all"
 
 
 #%% aux func
@@ -851,7 +851,7 @@ latents2 = pb.get_latents()
 coords = np.zeros(3)
 
 do_kinematics = True
-do_kinematics_ricardo = True
+do_kinematics_ricardo = False
 
 last_render_timestamp = 0
 
@@ -889,7 +889,7 @@ while True:
         # MOTIVE FOR PASTA tracking first
         # right_hand.update()
         # left_hand.update()
-        # right_foot.update()111119999
+        # right_foot.update()
         # left_foot.update()
         # center.update()
         # head.update()
@@ -1002,6 +1002,7 @@ while True:
     dt = time.time() - t_last
     t_last = time.time()
     # show_osc_visualization = meta_input.get(akai_lpd8="B0", button_mode="toggle")
+    
     if show_osc_visualization:
         receiver.show_visualization()
         
@@ -1025,7 +1026,7 @@ while True:
     
     enable_embed_mod = midi_input.get("A3", button_mode="toggle")
     kill_embed_weights = midi_input.get("C3", button_mode="toggle")
-    max_embed_mods = midi_input.get("A2", val_min=0.3, val_max=12.5, val_default=0.8)
+    max_embed_mods = midi_input.get("A2", val_min=0.3, val_max=2.5, val_default=0.8)
     if enable_embed_mod:
         
         amp_embed_mod1 = midi_input.get(f"A5", val_min=0, val_max=max_embed_mods, val_default=0)
@@ -1207,237 +1208,299 @@ while True:
             
             # xm = motive.get_last()['unlabeled_markers']
             # coord_array = np.array(list(xm.values()))
-            try:
-                outliers = detect_outliers(positions)
-                positions = positions[~outliers]
+            
+            if do_raw_kids_drawing:
+                coord_array = positions.copy()            
+                coord_array[:,1] = -coord_array[:,1]
+                coord_array[:,0] = -coord_array[:,0]
                 
-                do_two_spines = False
-                if do_two_spines:
-                    nr_clusters = 2
-                    # positions = positions[positions[:,1] < 2]
+                coord_offset = np.array([180,230,280])[None]
+                if len(coord_array) > 0:
+                    coord_array *= coord_scale
+                    coord_array[:,2] *= 1.2
+                    coord_array[:,0] *= 1.2
+                    coord_array += coord_offset
                     
-                    labels, centroids = kmeans(positions, nr_clusters)
-                    
-                    if centroids[0,0] > centroids[1,0]:
-                        labels = 1 - labels
-                    
-                    idx_spine0 = np.where(labels==0)[0]
-                    idx_spine1 = np.where(labels==1)[0]
-        
-                    spine0 = positions[labels==0]
-                    spine1 = positions[labels==1]
-                    
-                    coord_array = positions.copy()            
-        
-                    if len(idx_spine0) > 0:
-                        idx_lowest = np.argmin(spine0[:,1])
-                        spine0 -= spine0[idx_lowest,:][None]
-                        coord_array[idx_spine0] = spine0
-        
-                    if len(idx_spine1) > 0:
-                        idx_lowest = np.argmin(spine1[:,1])
-                        spine1 -= spine1[idx_lowest,:][None]
-                        coord_array[idx_spine1] = spine1
+                    coord_array[coord_array < 0] = 0
                         
-                    coord_array[:,1] = -coord_array[:,1]
+                    coord_array[:,0][coord_array[:,0] >= sz_drawing[0]] = sz_drawing[0] - 1
+                    coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
                     
-                    coord_offset_spine0 = np.array([0,230,185])[None]
-                    coord_offset_spine1 = np.array([0,230,405])[None]
+                    coord_array = coord_array.astype(np.int32)
                     
-                    if len(coord_array) > 0:
-                        coord_array[:,1:] *= coord_scale
+                    # decay canvas
+                    canvas = canvas * decay_rate
+                    
+                    # Create a grid of coordinates
+                    Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
+                    X = X.float()
+                    Y = Y.float()
+                    
+                    for idx, coord in enumerate(coord_array):
+                        color_angle = idx*10
+                        color_vec = angle_to_rgb(color_angle)
+                        color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
                         
+                        patch = draw_circular_patch(Y,X,coord[0], coord[2],mask_radius)
+                        if use_underlay_image:
+                            colors = patch.unsqueeze(2)*color_vec[None][None]
+                        else:
+                            colors = patch.unsqueeze(2)*noise_patch*color_vec[None][None]
+            
+                        # Add the color gradient to the image
+                        colors /= (colors.max() + 0.0001)
+                        canvas += colors * drawing_intensity * 255
+                        canvas = canvas.clamp(0, 255)
+                    # canvas = torch.roll(canvas, -1, dims=[0])
+                    
+                    # print(f'canvas_max: {canvas.max()}')
+                    # Ensure values remain within the 0-255 range after addition
+                    canvas_numpy = canvas.cpu().numpy()
+                    canvas_numpy = np.clip(canvas_numpy, 0, 255)
+                    
+                    
+                    if use_underlay_image:
+                        canvas_numpy /= 255
+                        img_drive = underlay_image * canvas_numpy
+                        img_drive = img_drive.astype(np.uint8)
+                    else:
+                        img_drive = canvas_numpy                       
+                else:
+                    print('cant see markers')
+                    
+                 
+            else:
+                try:
+                    # outliers = detect_outliers(positions)
+                    # positions = positions[~outliers]
+                    
+                    do_two_spines = False
+                    if do_two_spines:
+                        nr_clusters = 2
+                        # positions = positions[positions[:,1] < 2]
+                        
+                        labels, centroids = kmeans(positions, nr_clusters)
+                        
+                        if centroids[0,0] > centroids[1,0]:
+                            labels = 1 - labels
+                        
+                        idx_spine0 = np.where(labels==0)[0]
+                        idx_spine1 = np.where(labels==1)[0]
+            
+                        spine0 = positions[labels==0]
+                        spine1 = positions[labels==1]
+                        
+                        coord_array = positions.copy()            
+            
                         if len(idx_spine0) > 0:
-                            coord_array[idx_spine0] += coord_offset_spine0
-                        
+                            idx_lowest = np.argmin(spine0[:,1])
+                            spine0 -= spine0[idx_lowest,:][None]
+                            coord_array[idx_spine0] = spine0
+            
                         if len(idx_spine1) > 0:
-                            coord_array[idx_spine1] += coord_offset_spine1
+                            idx_lowest = np.argmin(spine1[:,1])
+                            spine1 -= spine1[idx_lowest,:][None]
+                            coord_array[idx_spine1] = spine1
+                            
+                        coord_array[:,1] = -coord_array[:,1]
                         
-                        if False:
-                            coord_array[:,1] = -coord_array[:,1]
-                            x_distance = coord_array[:,0].copy()
-                            y_distance = coord_array[0,:].copy()
-                            
-                            x_mean_dist = x_distance.mean() 
-                            if x_mean_dist < 0:
-                                x_mean_dist = 0
-                            y_mean_dist = y_distance.mean() 
-                            if y_mean_dist < 0:
-                                y_mean_dist = 0
-                            
+                        coord_offset_spine0 = np.array([0,230,185])[None]
+                        coord_offset_spine1 = np.array([0,230,405])[None]
+                        
+                        if len(coord_array) > 0:
                             coord_array[:,1:] *= coord_scale
-                            coord_array += coord_offset
-                        
-                        coord_array[coord_array < 0] = 0
                             
-                        coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
-                        coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
-                        
-                        
-                        coord_array = coord_array.astype(np.int32)
-                        
-                        # decay canvas
-                        canvas = canvas * decay_rate
-                        
-                        # Create a grid of coordinates
-                        Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
-                        X = X.float()
-                        Y = Y.float()
-                        
-                        for idx, coord in enumerate(coord_array):
-                            # marker drop
-                            # color_angle = float(coord_array[idx,0]*1)
-                            # color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0)
-                            color_vec = angle_to_rgb(color_angle)
-                            color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
+                            if len(idx_spine0) > 0:
+                                coord_array[idx_spine0] += coord_offset_spine0
                             
-                            if use_underlay_image:
-                                color_vec[:] = 1
+                            if len(idx_spine1) > 0:
+                                coord_array[idx_spine1] += coord_offset_spine1
+                            
+                            if False:
+                                coord_array[:,1] = -coord_array[:,1]
+                                x_distance = coord_array[:,0].copy()
+                                y_distance = coord_array[0,:].copy()
                                 
-                            color_vec[:] = 0.5
-                            if labels[idx] == 1:
-                                color_vec[0] = 1
-                            else:
-                                color_vec[1] = 1
-                            
-                            patch = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius)
-                            if use_underlay_image:
-                                colors = patch.unsqueeze(2)*color_vec[None][None]
-                            else:
-                                colors = patch.unsqueeze(2)*noise_patch*color_vec[None][None]
-                
-                            # Add the color gradient to the image
-                            colors /= (colors.max() + 0.0001)
-                            canvas += colors * drawing_intensity * 255
-                            canvas = canvas.clamp(0, 255)
-                        # canvas = torch.roll(canvas, -1, dims=[0])
-                    else:
-                        print('cant see markers')
-                else:
-                    nr_clusters = 4
-                    
-                    labels, centroids = kmeans(positions, nr_clusters)
-                    
-                    list_unique_labels = np.unique(labels)
-                    
-                    idx_labels = []
-                    for label in list_unique_labels:
-                        idx_labels.append(np.where(labels==label)[0])
-                    
-                    # find mean coord for each label
-                    list_coord_spines = []
-                    list_mean_z_pos = []
-                    for i in range(len(list_unique_labels)):
-                        subpos = positions[idx_labels[i], :].copy()
-                        list_coord_spines.append(subpos)
-                        list_mean_z_pos.append(np.mean(subpos[:,2]))
-                        
-                    idx_line_order = np.argsort(np.array(list_mean_z_pos))
-                    
-                    list_coord_spines_new = []
-                    for idx in idx_line_order:
-                        list_coord_spines_new.append(list_coord_spines[idx])
-                    list_coord_spines = list_coord_spines_new
-                    
-                    for i in range(len(list_unique_labels)):
-                        subpos = list_coord_spines[i]
-                        idx_lowest = np.argmin(subpos[:,1])
-                        list_coord_spines[i] -= list_coord_spines[i][idx_lowest,:][None]
-                        
-                    for i in range(len(list_unique_labels)):
-                        list_coord_spines[i][:,1] = -list_coord_spines[i][:,1]
-                    
-                    list_coord_offset = []
-                    list_coord_offset.append(np.array([0,230,130])[None])
-                    list_coord_offset.append(np.array([0,230,260])[None])
-                    list_coord_offset.append(np.array([0,230,390])[None])
-                    list_coord_offset.append(np.array([0,230,520])[None])
-                    
-                    for i in range(len(list_unique_labels)):
-                        list_coord_spines[i] *= coord_scale
-                        list_coord_spines[i] += list_coord_offset[i]
-                        
-                    labels_sorted = []
-                    coord_array = []
-                    for idx, l in enumerate(list_coord_spines):
-                        coord_array.append(l)
-                        labels_sorted.extend(np.ones(len(l))*idx)
-                    
-                    labels_sorted = np.array(labels_sorted)
-                    coord_array = np.vstack(coord_array)
-                    
-                    if len(coord_array) > 0:
-                        coord_array[coord_array < 0] = 0
-                            
-                        coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
-                        coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
-                        
-                        
-                        coord_array = coord_array.astype(np.int32)
-                        
-                        # decay canvas
-                        canvas = canvas * decay_rate
-                        
-                        # Create a grid of coordinates
-                        Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
-                        X = X.float()
-                        Y = Y.float()
-                        
-                        for idx, coord in enumerate(coord_array):
-                            # marker drop
-                            # color_angle = float(coord_array[idx,0]*1)
-                            # color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0)
-                            color_vec = angle_to_rgb(color_angle)
-                            color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
-                            
-                            if use_underlay_image:
-                                color_vec[:] = 1
+                                x_mean_dist = x_distance.mean() 
+                                if x_mean_dist < 0:
+                                    x_mean_dist = 0
+                                y_mean_dist = y_distance.mean() 
+                                if y_mean_dist < 0:
+                                    y_mean_dist = 0
                                 
-                            # color_vec[:] = 1
-                            color_vec[:] = 0.5
-                            if labels_sorted[idx] == 0:
-                                color_vec[0] = 1
-                            elif labels_sorted[idx] == 1:
-                                color_vec[1] = 1
-                            elif labels_sorted[idx] == 2:
-                                color_vec[2] = 1
-                            else:
-                                color_vec[0] = 1
-                                color_vec[1] = 1
+                                coord_array[:,1:] *= coord_scale
+                                coord_array += coord_offset
                             
-                            patch = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius)
-                            if use_underlay_image:
-                                colors = patch.unsqueeze(2)*color_vec[None][None]
-                            else:
-                                colors = patch.unsqueeze(2)*noise_patch*color_vec[None][None]
-                
-                            # Add the color gradient to the image
-                            colors /= (colors.max() + 0.0001)
-                            canvas += colors * drawing_intensity * 255
-                            canvas = canvas.clamp(0, 255)
-                        # canvas = torch.roll(canvas, -1, dims=[0])
-                    else:
-                        print('cant see markers')                    
-    
-                # print(f'canvas_max: {canvas.max()}')
-                # Ensure values remain within the 0-255 range after addition
-                canvas_numpy = canvas.cpu().numpy()
-                canvas_numpy = np.clip(canvas_numpy, 0, 255)
-                
-                
-                if use_underlay_image:
-                    canvas_numpy /= 255
-                    img_drive = underlay_image * canvas_numpy
-                    img_drive = img_drive.astype(np.uint8)
-                else:
-                    img_drive = canvas_numpy
+                            coord_array[coord_array < 0] = 0
+                                
+                            coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
+                            coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
+                            
+                            
+                            coord_array = coord_array.astype(np.int32)
+                            
+                            # decay canvas
+                            canvas = canvas * decay_rate
+                            
+                            # Create a grid of coordinates
+                            Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
+                            X = X.float()
+                            Y = Y.float()
+                            
+                            for idx, coord in enumerate(coord_array):
+                                # marker drop
+                                # color_angle = float(coord_array[idx,0]*1)
+                                # color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0)
+                                color_vec = angle_to_rgb(color_angle)
+                                color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
+                                
+                                if use_underlay_image:
+                                    color_vec[:] = 1
+                                    
+                                color_vec[:] = 0.5
+                                if labels[idx] == 1:
+                                    color_vec[0] = 1
+                                else:
+                                    color_vec[1] = 1
+                                
+                                patch = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius)
+                                if use_underlay_image:
+                                    colors = patch.unsqueeze(2)*color_vec[None][None]
+                                else:
+                                    colors = patch.unsqueeze(2)*noise_patch*color_vec[None][None]
                     
-                # print(f'max img_drive {img_drive.max()}')
-            except Exception as e:
-                print(f'exception noo coords {e}')
-                img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
-                img_drive = np.flip(img_drive, axis=2)                
-                pass
+                                # Add the color gradient to the image
+                                colors /= (colors.max() + 0.0001)
+                                canvas += colors * drawing_intensity * 255
+                                canvas = canvas.clamp(0, 255)
+                            # canvas = torch.roll(canvas, -1, dims=[0])
+                        else:
+                            print('cant see markers')
+                    else:
+                        nr_clusters = 4
+                        
+                        labels, centroids = kmeans(positions, nr_clusters)
+                        
+                        list_unique_labels = np.unique(labels)
+                        
+                        idx_labels = []
+                        for label in list_unique_labels:
+                            idx_labels.append(np.where(labels==label)[0])
+                        
+                        # find mean coord for each label
+                        list_coord_spines = []
+                        list_mean_z_pos = []
+                        for i in range(len(list_unique_labels)):
+                            subpos = positions[idx_labels[i], :].copy()
+                            list_coord_spines.append(subpos)
+                            list_mean_z_pos.append(np.mean(subpos[:,2]))
+                            
+                        idx_line_order = np.argsort(np.array(list_mean_z_pos))
+                        
+                        list_coord_spines_new = []
+                        for idx in idx_line_order:
+                            list_coord_spines_new.append(list_coord_spines[idx])
+                        list_coord_spines = list_coord_spines_new
+                        
+                        for i in range(len(list_unique_labels)):
+                            subpos = list_coord_spines[i]
+                            idx_lowest = np.argmin(subpos[:,1])
+                            list_coord_spines[i] -= list_coord_spines[i][idx_lowest,:][None]
+                            
+                        for i in range(len(list_unique_labels)):
+                            list_coord_spines[i][:,1] = -list_coord_spines[i][:,1]
+                        
+                        list_coord_offset = []
+                        list_coord_offset.append(np.array([0,230,130])[None])
+                        list_coord_offset.append(np.array([0,230,260])[None])
+                        list_coord_offset.append(np.array([0,230,390])[None])
+                        list_coord_offset.append(np.array([0,230,520])[None])
+                        
+                        for i in range(len(list_unique_labels)):
+                            list_coord_spines[i] *= coord_scale
+                            list_coord_spines[i] += list_coord_offset[i]
+                            
+                        labels_sorted = []
+                        coord_array = []
+                        for idx, l in enumerate(list_coord_spines):
+                            coord_array.append(l)
+                            labels_sorted.extend(np.ones(len(l))*idx)
+                        
+                        labels_sorted = np.array(labels_sorted)
+                        coord_array = np.vstack(coord_array)
+                        
+                        if len(coord_array) > 0:
+                            coord_array[coord_array < 0] = 0
+                                
+                            coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
+                            coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
+                            
+                            
+                            coord_array = coord_array.astype(np.int32)
+                            
+                            # decay canvas
+                            canvas = canvas * decay_rate
+                            
+                            # Create a grid of coordinates
+                            Y, X = torch.meshgrid(torch.arange(height, device='cuda'), torch.arange(width, device='cuda'), indexing='ij')                
+                            X = X.float()
+                            Y = Y.float()
+                            
+                            for idx, coord in enumerate(coord_array):
+                                # marker drop
+                                # color_angle = float(coord_array[idx,0]*1)
+                                # color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0)
+                                color_vec = angle_to_rgb(color_angle)
+                                color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
+                                
+                                if use_underlay_image:
+                                    color_vec[:] = 1
+                                    
+                                # color_vec[:] = 1
+                                color_vec[:] = 0.5
+                                if labels_sorted[idx] == 0:
+                                    color_vec[0] = 1
+                                elif labels_sorted[idx] == 1:
+                                    color_vec[1] = 1
+                                elif labels_sorted[idx] == 2:
+                                    color_vec[2] = 1
+                                else:
+                                    color_vec[0] = 1
+                                    color_vec[1] = 1
+                                
+                                patch = draw_circular_patch(Y,X,coord[1], coord[2],mask_radius)
+                                if use_underlay_image:
+                                    colors = patch.unsqueeze(2)*color_vec[None][None]
+                                else:
+                                    colors = patch.unsqueeze(2)*noise_patch*color_vec[None][None]
+                    
+                                # Add the color gradient to the image
+                                colors /= (colors.max() + 0.0001)
+                                canvas += colors * drawing_intensity * 255
+                                canvas = canvas.clamp(0, 255)
+                            # canvas = torch.roll(canvas, -1, dims=[0])
+                        else:
+                            print('cant see markers')                    
+        
+                    # print(f'canvas_max: {canvas.max()}')
+                    # Ensure values remain within the 0-255 range after addition
+                    canvas_numpy = canvas.cpu().numpy()
+                    canvas_numpy = np.clip(canvas_numpy, 0, 255)
+                    
+                    
+                    if use_underlay_image:
+                        canvas_numpy /= 255
+                        img_drive = underlay_image * canvas_numpy
+                        img_drive = img_drive.astype(np.uint8)
+                    else:
+                        img_drive = canvas_numpy
+                        
+                    # print(f'max img_drive {img_drive.max()}')
+                except Exception as e:
+                    print(f'exception noo coords {e}')
+                    img_drive = movie_reader.get_next_frame(speed=int(speed_movie))
+                    img_drive = np.flip(img_drive, axis=2)                
+                    pass
                 
         else:
             # speed_movie += int(av_router.get_modulation('acid'))
@@ -1595,8 +1658,6 @@ while True:
     last_render_timestamp = time.time()
     fps = np.round(1/time_difference)
     # lt.dynamic_print(f'fps: {fps}')
-
-
 
     
     

@@ -7,6 +7,7 @@ import re
 import threading
 import os
 import numpy as np
+import time
 
 os.chdir("/home/lugo/git/psychoactive_surface/")
 
@@ -38,7 +39,7 @@ class MarkerTracker:
         self.list_unlabeled = []
         self.list_timestamps = []
         
-        self.max_nr_markers = 99
+        self.max_nr_markers = 999
         self.positions = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])*np.nan
         self.velocities = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])
         self.pos_idx = 0
@@ -518,7 +519,7 @@ def compute_sq_distances(a, b):
 
 
 if __name__ == "__main__":
-    motive = MarkerTracker('192.168.50.64', process_list=['rigid_bodies'])
+    motive = MarkerTracker('192.168.50.64', process_list=['rigid_bodies', 'unlabeled markers', 'labeled_markers'])
     
     left_hand = RigidBody(motive, "left_hand")
     right_hand = RigidBody(motive, "right_hand")
