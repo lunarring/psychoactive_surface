@@ -325,6 +325,21 @@ class MarkerTracker:
                 unlabeled_markers[marker_id] = position
         return unlabeled_markers    
     
+    # def extract_skeletons(self, data):
+    #     unlabeled_markers = {}
+    #     for line in data:
+    #         if "Unlabeled Marker" in line:
+    #             # Extract MarkerID and position more accurately
+    #             marker_id_part = line.split('MarkerID=')[1]
+    #             marker_id = int(marker_id_part.split(']')[0].strip())
+    
+    #             pos_part = line.split('pos=')[1]
+    #             position_str = pos_part.split(']')[0].strip()
+    #             position = [float(num) for num in position_str.split(',')]
+    
+    #             unlabeled_markers[marker_id] = position
+    #     return unlabeled_markers    
+    
     # def get_key_measurements(self):
     #     xm = motive.get_last()['unlabeled_markers']
     #     positions = np.array(list(xm.values()))
