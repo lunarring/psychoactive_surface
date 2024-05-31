@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri May 31 16:43:58 2024
+
+@author: lugo
+"""
+
+==========BEGINPACKET==========
+FrameID : 15855
+Timestamp : 93998.04700000
+Params : 0000000000000100
+Timecode : 00:00:02:152.0
+Motive Software latency : 0.72 milliseconds
+Transit latency : 0.71 milliseconds
+------------------------
+Rigid Bodies [Count=4]
+Opiyo center [ID=2  Error(mm)=0.00000  Tracked=1]
+	x	y	z	qx	qy	qz	qw
+	1.00738	0.90053	0.27913	0.13870	-0.47864	0.07302	-0.86391
+O right hand [ID=3  Error(mm)=0.00000  Tracked=1]
+	x	y	z	qx	qy	qz	qw
+	1.00416	0.83182	0.07755	0.35578	-0.58893	0.71540	0.12162
+O left hand [ID=4  Error(mm)=0.00000  Tracked=1]
+	x	y	z	qx	qy	qz	qw
+	0.75720	0.76234	0.16231	-0.41639	0.08895	0.51869	0.74139
+O head [ID=5  Error(mm)=0.00000  Tracked=1]
+	x	y	z	qx	qy	qz	qw
+	0.74485	1.52464	0.11516	0.23324	-0.51972	0.06718	-0.81913
+------------------------
+Skeletons [Count=0]
+------------------------
+Assets [Count=0]
+------------------------
+Markers [Count=15]
+Labeled Marker [ModelID=2, MarkerID=1] [size=  0] [pos=0.96763146,0.94342458,0.22629903] [residual(mm)=0.4055]
+Labeled Marker [ModelID=2, MarkerID=2] [size=  0] [pos=1.07249022,0.90440512,0.30833679] [residual(mm)=0.5528]
+Labeled Marker [ModelID=2, MarkerID=3] [size=  0] [pos=0.96110517,0.87110204,0.27921230] [residual(mm)=0.4233]
+Labeled Marker [ModelID=3, MarkerID=1] [size=  0] [pos=1.03328884,0.79287273,0.08265189] [residual(mm)=0.2813]
+Labeled Marker [ModelID=3, MarkerID=2] [size=  0] [pos=1.06335819,0.86838871,0.02865426] [residual(mm)=0.2364]
+Labeled Marker [ModelID=3, MarkerID=3] [size=  0] [pos=0.95151377,0.87456131,0.08299414] [residual(mm)=0.4253]
+Labeled Marker [ModelID=3, MarkerID=4] [size=  0] [pos=0.96905851,0.79216182,0.11578420] [residual(mm)=0.4657]
+Labeled Marker [ModelID=4, MarkerID=1] [size=  0] [pos=0.75754666,0.83418465,0.12745956] [residual(mm)=1.0576]
+Labeled Marker [ModelID=4, MarkerID=2] [size=  0] [pos=0.71130502,0.74047816,0.22158201] [residual(mm)=1.6150]
+Labeled Marker [ModelID=4, MarkerID=3] [size=  0] [pos=0.77665138,0.72074538,0.16213422] [residual(mm)=0.4464]
+Labeled Marker [ModelID=4, MarkerID=4] [size=  0] [pos=0.78287190,0.75411111,0.13790669] [residual(mm)=0.6565]
+Labeled Marker [ModelID=5, MarkerID=1] [size=  0] [pos=0.81332451,1.52855253,0.08022665] [residual(mm)=0.6978]
+Labeled Marker [ModelID=5, MarkerID=2] [size=  0] [pos=0.74389488,1.55404222,0.17377925] [residual(mm)=0.4314]
+Labeled Marker [ModelID=5, MarkerID=3] [size=  0] [pos=0.73706418,1.48938465,0.05040432] [residual(mm)=0.8467]
+Labeled Marker [ModelID=5, MarkerID=4] [size=  0] [pos=0.68508381,1.52655327,0.15620866] [residual(mm)=0.7840]
+------------------------
+Force Plates [Count=0]
+------------------------
+Devices [Count=0]
+
+==========ENDPACKET==========
+
+##Skeletons
+
+==========BEGINPACKET==========
+FrameID : 3585
+Timestamp : 87994.01700000
+Params : 0000000000000100
+Timecode : 00:00:13:52.0
+Motive Software latency : 1.15 milliseconds
+Transit latency : 0.36 milliseconds
+------------------------
+Rigid Bodies [Count=0]
+------------------------
+Skeletons [Count=1]
+Skeleton [ID=0  Bone count=51]
+Bone 1	0.71206	0.91804	0.49157	-0.04895	0.95678	0.00064	-0.28668
+Bone 2	0.70398	1.00420	0.49411	-0.04243	0.96371	-0.01850	-0.26290
+Bone 3	0.68331	1.22914	0.49109	-0.02221	0.96793	-0.09024	-0.23339
+Bone 4	0.66413	1.45053	0.45408	0.00956	0.91793	-0.10568	-0.38230
+Bone 5	0.64230	1.57976	0.41384	-0.04204	0.83510	-0.13982	-0.53037
+Bone 6	0.63086	1.44540	0.47159	0.02655	0.97542	-0.10381	-0.19255
+Bone 7	0.53143	1.45527	0.51139	-0.39245	0.74749	-0.50448	-0.18095
+Bone 8	0.30666	1.31027	0.75052	-0.62558	0.76539	-0.09816	0.11489
+Bone 9	0.26294	1.08584	0.73837	-0.80470	0.54946	-0.22439	0.01393
+Bone 22	0.30014	1.07016	0.72307	-0.70649	0.48851	-0.18617	0.47705
+Bone 23	0.31361	1.04439	0.71704	-0.73812	0.42177	-0.41758	0.32081
+Bone 24	0.32111	1.02179	0.72582	-0.73812	0.42177	-0.41758	0.32081
+Bone 25	0.29848	1.00720	0.73807	-0.79262	0.50760	-0.30758	0.13964
+Bone 26	0.31168	0.96741	0.75352	-0.79262	0.50760	-0.30758	0.13964
+Bone 27	0.31829	0.94752	0.76125	-0.79262	0.50760	-0.30758	0.13964
+Bone 28	0.29061	1.01189	0.75687	-0.80470	0.54946	-0.22439	0.01393
+Bone 29	0.30513	0.96812	0.77387	-0.80470	0.54946	-0.22439	0.01393
+Bone 30	0.31305	0.94425	0.78314	-0.80470	0.54946	-0.22439	0.01393
+Bone 31	0.28149	1.02052	0.77396	-0.80470	0.54946	-0.22439	0.01393
+Bone 32	0.29469	0.98073	0.78941	-0.80470	0.54946	-0.22439	0.01393
+Bone 33	0.30129	0.96083	0.79714	-0.80470	0.54946	-0.22439	0.01393
+Bone 34	0.27229	1.02918	0.79121	-0.79697	0.57780	-0.13567	-0.11213
+Bone 35	0.28286	0.99735	0.80357	-0.79697	0.57780	-0.13567	-0.11213
+Bone 36	0.28814	0.98143	0.80975	-0.79697	0.57780	-0.13567	-0.11213
+Bone 10	0.69780	1.44547	0.43730	-0.07042	0.97623	-0.07610	-0.19032
+Bone 11	0.79649	1.45714	0.39618	0.14206	0.87260	-0.14767	-0.44338
+Bone 12	0.99973	1.32120	0.13361	0.02354	0.70254	-0.27871	-0.65437
+Bone 13	1.03236	1.23011	-0.07391	-0.12194	0.84319	-0.15732	-0.49941
+Bone 37	1.02459	1.19838	-0.10214	-0.34178	0.54363	-0.42608	-0.63727
+Bone 38	1.02323	1.19329	-0.13137	-0.30377	0.71880	-0.46802	-0.41473
+Bone 39	1.03519	1.19452	-0.15371	-0.30377	0.71880	-0.46802	-0.41473
+Bone 40	1.04513	1.22190	-0.15886	-0.19856	0.80820	-0.28729	-0.47418
+Bone 41	1.06620	1.22407	-0.19820	-0.19856	0.80820	-0.28729	-0.47418
+Bone 42	1.07673	1.22515	-0.21787	-0.19856	0.80820	-0.28729	-0.47418
+Bone 43	1.06194	1.23000	-0.14941	-0.12194	0.84319	-0.15732	-0.49941
+Bone 44	1.08511	1.23238	-0.19269	-0.12194	0.84319	-0.15732	-0.49941
+Bone 45	1.09775	1.23368	-0.21630	-0.12194	0.84319	-0.15732	-0.49941
+Bone 46	1.07650	1.23781	-0.13611	-0.12194	0.84319	-0.15732	-0.49941
+Bone 47	1.09756	1.23997	-0.17546	-0.12194	0.84319	-0.15732	-0.49941
+Bone 48	1.10810	1.24106	-0.19513	-0.12194	0.84319	-0.15732	-0.49941
+Bone 49	1.09120	1.24568	-0.12274	-0.04231	0.85742	-0.02348	-0.51233
+Bone 50	1.10805	1.24742	-0.15421	-0.04231	0.85742	-0.02348	-0.51233
+Bone 51	1.11648	1.24828	-0.16995	-0.04231	0.85742	-0.02348	-0.51233
+Bone 14	0.63391	0.90920	0.54316	-0.06891	0.86501	0.15983	-0.47060
+Bone 15	0.62089	0.51750	0.40083	-0.16710	0.87923	-0.02718	-0.44529
+Bone 16	0.76822	0.08082	0.35403	-0.18983	0.73207	0.00252	-0.65424
+Bone 17	0.64972	-0.01044	0.31831	-0.18396	0.73202	0.00909	-0.65592
+Bone 18	0.79021	0.92689	0.43997	-0.01097	0.95994	0.19957	-0.19637
+Bone 19	0.76631	0.54325	0.27842	-0.08635	0.96212	-0.18878	-0.17671
+Bone 20	0.87419	0.11993	0.43256	-0.12260	0.97423	-0.17587	0.07004
+Bone 21	0.91263	0.01848	0.32357	-0.12747	0.98462	-0.10290	0.06072
+------------------------
+Assets [Count=0]
+------------------------
+Markers [Count=50]
+Labeled Marker [ModelID=0, MarkerID=1] [size=  0] [pos=0.54445630,0.96136618,0.48723158] [residual(mm)=0.3735]
+Labeled Marker [ModelID=0, MarkerID=3] [size=  0] [pos=0.66756088,1.03675532,0.62765110] [residual(mm)=0.6605]
+Labeled Marker [ModelID=0, MarkerID=4] [size=  0] [pos=0.72170299,1.05494463,0.60592055] [residual(mm)=1.1507]
+Labeled Marker [ModelID=0, MarkerID=5] [size=  0] [pos=0.81792080,1.07068586,0.52700073] [residual(mm)=0.5885]
+Labeled Marker [ModelID=0, MarkerID=2] [size=  0] [pos=0.75419354,0.99226654,0.34923613] [residual(mm)=0.9479]
+Labeled Marker [ModelID=0, MarkerID=6] [size=  0] [pos=0.70850337,1.47456360,0.53202856] [residual(mm)=1.4741]
+Labeled Marker [ModelID=0, MarkerID=7] [size=  0] [pos=0.65673733,1.32663989,0.62046158] [residual(mm)=0.6047]
+Labeled Marker [ModelID=0, MarkerID=8] [size=  0] [pos=0.79046601,1.30145490,0.55709094] [residual(mm)=0.6371]
+Labeled Marker [ModelID=0, MarkerID=9] [size=  0] [pos=0.65459114,1.31817102,0.36645332] [residual(mm)=0.7590]
+Labeled Marker [ModelID=0, MarkerID=10] [size=  0] [pos=0.57516193,1.22204924,0.40070057] [residual(mm)=0.5844]
+Labeled Marker [ModelID=0, MarkerID=12] [size=  0] [pos=0.51716709,1.59842086,0.37499788] [residual(mm)=0.2982]
+Labeled Marker [ModelID=0, MarkerID=13] [size=  0] [pos=0.58860922,1.60709822,0.49882197] [residual(mm)=0.9975]
+Labeled Marker [ModelID=0, MarkerID=11] [size=  0] [pos=0.63437700,1.68319166,0.40097579] [residual(mm)=0.5552]
+Labeled Marker [ModelID=0, MarkerID=14] [size=  0] [pos=0.68947715,1.61736321,0.34565204] [residual(mm)=0.5798]
+Labeled Marker [ModelID=0, MarkerID=16] [size=  0] [pos=0.55448925,1.49453771,0.55551261] [residual(mm)=0.5755]
+Labeled Marker [ModelID=0, MarkerID=15] [size=  0] [pos=0.51697284,1.48466647,0.49823573] [residual(mm)=0.3698]
+Labeled Marker [ModelID=0, MarkerID=18] [size=  0] [pos=0.46665052,1.41995525,0.69764161] [residual(mm)=1.3078]
+Labeled Marker [ModelID=0, MarkerID=17] [size=  0] [pos=0.35533023,1.36250913,0.81779402] [residual(mm)=0.8471]
+Labeled Marker [ModelID=0, MarkerID=19] [size=  0] [pos=0.28303114,1.22712791,0.72712743] [residual(mm)=0.4278]
+Labeled Marker [ModelID=0, MarkerID=20] [size=  0] [pos=0.26914948,1.07260942,0.80058056] [residual(mm)=1.1534]
+Labeled Marker [ModelID=0, MarkerID=21] [size=  0] [pos=0.29862213,1.09787416,0.70616478] [residual(mm)=0.7964]
+Labeled Marker [ModelID=0, MarkerID=22] [size=  0] [pos=0.29688832,1.01449800,0.80857694] [residual(mm)=0.5603]
+Labeled Marker [ModelID=0, MarkerID=23] [size=  0] [pos=0.28670356,0.99826735,0.72636104] [residual(mm)=0.3731]
+Labeled Marker [ModelID=0, MarkerID=25] [size=  0] [pos=0.82491106,1.46019554,0.46643436] [residual(mm)=0.9384]
+Labeled Marker [ModelID=0, MarkerID=24] [size=  0] [pos=0.81399536,1.46605134,0.39479017] [residual(mm)=1.1281]
+Labeled Marker [ModelID=0, MarkerID=27] [size=  0] [pos=0.95540923,1.33131230,0.31190026] [residual(mm)=0.5170]
+Labeled Marker [ModelID=0, MarkerID=26] [size=  0] [pos=0.99804443,1.22587657,0.20362987] [residual(mm)=0.4505]
+Labeled Marker [ModelID=0, MarkerID=28] [size=  0] [pos=1.02283370,1.28570640,0.06686356] [residual(mm)=1.0552]
+Labeled Marker [ModelID=0, MarkerID=29] [size=  0] [pos=1.07116401,1.23026097,-0.06856351] [residual(mm)=1.1441]
+Labeled Marker [ModelID=0, MarkerID=30] [size=  0] [pos=0.97638166,1.20017219,-0.08197629] [residual(mm)=0.5750]
+Labeled Marker [ModelID=0, MarkerID=31] [size=  0] [pos=1.10024858,1.21714401,-0.13463579] [residual(mm)=0.8083]
+Labeled Marker [ModelID=0, MarkerID=32] [size=  0] [pos=1.03611612,1.24434268,-0.15575780] [residual(mm)=0.6086]
+Labeled Marker [ModelID=0, MarkerID=33] [size=  0] [pos=0.56882471,0.61613214,0.37034866] [residual(mm)=0.3215]
+Labeled Marker [ModelID=0, MarkerID=34] [size=  0] [pos=0.55231124,0.65567076,0.50266230] [residual(mm)=1.1075]
+Labeled Marker [ModelID=0, MarkerID=35] [size=  0] [pos=0.57308477,0.49475414,0.44839546] [residual(mm)=1.5916]
+Labeled Marker [ModelID=0, MarkerID=36] [size=  0] [pos=0.62573838,0.24281141,0.37610692] [residual(mm)=0.4733]
+Labeled Marker [ModelID=0, MarkerID=37] [size=  0] [pos=0.72453392,0.05367920,0.35615388] [residual(mm)=0.4342]
+Labeled Marker [ModelID=0, MarkerID=40] [size=  0] [pos=0.78772491,0.03357410,0.46410942] [residual(mm)=0.5653]
+Labeled Marker [ModelID=0, MarkerID=38] [size=  0] [pos=0.63192636,0.03276911,0.31797749] [residual(mm)=0.8386]
+Labeled Marker [ModelID=0, MarkerID=39] [size=  0] [pos=0.62304962,0.00713629,0.44227377] [residual(mm)=0.6768]
+Labeled Marker [ModelID=0, MarkerID=42] [size=  0] [pos=0.70744216,0.63964474,0.23438005] [residual(mm)=0.6631]
+Labeled Marker [ModelID=0, MarkerID=43] [size=  0] [pos=0.82363135,0.67621613,0.28710070] [residual(mm)=0.5349]
+Labeled Marker [ModelID=0, MarkerID=44] [size=  0] [pos=0.80291647,0.53141052,0.24833220] [residual(mm)=1.1236]
+Labeled Marker [ModelID=0, MarkerID=45] [size=  0] [pos=0.84668374,0.28912953,0.27941975] [residual(mm)=0.3738]
+Labeled Marker [ModelID=0, MarkerID=46] [size=  0] [pos=0.89892578,0.10921874,0.39817861] [residual(mm)=0.7935]
+Labeled Marker [ModelID=0, MarkerID=49] [size=  0] [pos=0.98735487,0.14142296,0.47175485] [residual(mm)=1.0139]
+Labeled Marker [ModelID=0, MarkerID=47] [size=  0] [pos=0.88157010,0.05131393,0.30176914] [residual(mm)=0.6820]
+Labeled Marker [ModelID=0, MarkerID=48] [size=  0] [pos=1.00350308,0.09212583,0.31641439] [residual(mm)=0.5796]
+Labeled Marker [ModelID=0, MarkerID=50] [size=  0] [pos=0.92602313,0.04568091,0.21923372] [residual(mm)=0.3857]
+Unlabeled Marker [ModelID=1, MarkerID=12788] [size=  0] [pos=0.53975290,0.00109266,0.32689106] [residual(mm)=0.4735]
+------------------------
+Force Plates [Count=0]
+------------------------
+Devices [Count=0]
+
+==========ENDPACKET==========
+
