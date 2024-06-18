@@ -39,7 +39,7 @@ REFACTOR OPS
 """
 #%% VARS
 do_compile = True
-res_fact = 1.5
+res_fact = 1.2
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
 width_renderer = 1920
@@ -50,10 +50,11 @@ size_img_tiles_hw = (120, 260)   # tile image size
 nmb_rows, nmb_cols = (7,7)       # number of tiles
 ip_address_osc_receiver = '192.168.50.238'
 ip_address_osc_sender = '192.168.50.42' # this name is a bit confusing
-show_osc_visualization = True
+show_osc_visualization = False
 use_cam = False
 do_fullscreen = False
 do_raw_kids_drawing = False
+do_acid_plane_transforms_by_tracking = True
 
 # key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
 
@@ -116,7 +117,9 @@ latents = pb.get_latents()
 secondary_renderer = lt.Renderer(width=width_renderer, height=height_renderer, 
                                  backend='opencv', do_fullscreen=True)
 
-motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "velocities", "rigid_bodies", "labeled_markers"])
+# motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "velocities", "rigid_bodies", "labeled_markers"])
+# motive = MarkerTracker('192.168.50.64', process_list=["unlabeled_markers", "rigid_bodies", "labeled_markers"])
+motive = MarkerTracker('10.40.48.84', process_list=["unlabeled_markers", "velocities", "labeled_markers", "rigid_bodies"])
 
 
 prompt_holder = util.PromptHolder(pb, size_img_tiles_hw, dir_prompts=dir_prompts)
@@ -296,17 +299,17 @@ sound_feature_names = ['crash', 'hihat', 'kick', 'snare']
 # body_feature_names = ['left_hand_y', 'right_hand_y'] # UNUSED
 
 ## sound coupling
-noodle_machine.create_noodle('hihat', 'd_fract_noise_mod', init_value=1)
-noodle_machine.create_noodle('crash', 'sound_embed_mod_1', init_value=1)
-noodle_machine.create_noodle('xxxxhihat', 'sound_embed_mod_2', init_value=1)
-noodle_machine.create_noodle('kick', 'sound_embed_mod_3', init_value=1)
-noodle_machine.create_noodle('snare', 'sound_embed_mod_4', init_value=1)
-noodle_machine.create_noodle('osc5', 'sound_embed_mod_5', init_value=1)
-noodle_machine.create_noodle('osc6', 'sound_embed_mod_6', init_value=1)
+# noodle_machine.create_noodle('hihat', 'd_fract_noise_mod', init_value=1)
+# noodle_machine.create_noodle('crash', 'sound_embed_mod_1', init_value=1)
+# noodle_machine.create_noodle('xxxxhihat', 'sound_embed_mod_2', init_value=1)
+# noodle_machine.create_noodle('kick', 'sound_embed_mod_3', init_value=1)
+# noodle_machine.create_noodle('snare', 'sound_embed_mod_4', init_value=1)
+# noodle_machine.create_noodle('osc5', 'sound_embed_mod_5', init_value=1)
+# noodle_machine.create_noodle('osc6', 'sound_embed_mod_6', init_value=1)
 
-noodle_machine.create_noodle('v_left_hand', 'sound_embed_mod_left_hand', init_value=1, do_auto_scale=False)
-noodle_machine.create_noodle('v_right_hand', 'sound_embed_mod_right_hand', init_value=1, do_auto_scale=False)
-noodle_machine.create_noodle('v_mic', 'sound_embed_mod_mic', init_value=1, do_auto_scale=False)
+# noodle_machine.create_noodle('v_left_hand', 'sound_embed_mod_left_hand', init_value=1, do_auto_scale=False)
+# noodle_machine.create_noodle('v_right_hand', 'sound_embed_mod_right_hand', init_value=1, do_auto_scale=False)
+# noodle_machine.create_noodle('v_mic', 'sound_embed_mod_mic', init_value=1, do_auto_scale=False)
 
 # noodle_machine.create_noodle(['DJLOW'], 'mem_acid_mod')
 # noodle_machine.create_noodle(['DJHIGH'], 'hue_rot_mod')
@@ -324,11 +327,12 @@ noodle_machine.create_noodle('total_spread', 'mem_acid_mod')
 
 
 
-#%% 
-
-right_hand = RigidBody(motive, "right_hand")
-left_hand = RigidBody(motive, "left_hand")
-mic = RigidBody(motive, "mic")
+#% 
+list_bodyparts = ["left_hand"]
+rigid_bodies = {}
+for bodypart in list_bodyparts:
+    rigid_bodies[bodypart] = RigidBody(motive, bodypart)
+    
 
 # center = RigidBody(motive, "center")
 # head = RigidBody(motive, "head")
@@ -352,14 +356,41 @@ latents1 = pb.get_latents()
 latents2 = pb.get_latents()
 coords = np.zeros(3)
 
-do_kinematics = True
+do_kinematics_new = False
 do_kinematics_ricardo = False
 
 last_render_timestamp = 0
+hue_rot = 0
 
 frame_count = 0
+dict_velocities = {}
+
+for bodypart in rigid_bodies:
+    noodle_machine.create_noodle(f'v_{bodypart}', f'embed_mod_{bodypart}', init_value=1, do_auto_scale=False)
+
 while True:
+    # Set noodles
     sender.send_message('\test', frame_count)
+    
+    if do_acid_plane_transforms_by_tracking:
+        for bodypart in rigid_bodies:
+            rigid_bodies[bodypart].update()
+            
+        # print(f"rigid_bodies['left_hand'].positions {rigid_bodies['left_hand'].positions}")
+    # 
+    if do_kinematics_new:    
+        for bodypart in rigid_bodies:
+            rigid_bodies[bodypart].update()
+        
+        smoothing_win = int(midi_input.get("H0", val_min=1, val_max=10, val_default=1))
+        
+        print(dict_velocities)
+        # Process velocities
+        for bodypart in rigid_bodies:
+            dict_velocities[bodypart] = np.linalg.norm(np.mean(rigid_bodies[bodypart].velocities[-smoothing_win:]))
+            noodle_machine.set_cause(f'v_{bodypart}', dict_velocities[bodypart])
+            
+    
     
     if do_kinematics_ricardo:
         right_hand.update()
@@ -381,8 +412,15 @@ while True:
         noodle_machine.set_cause('v_right_hand', v_right_hand)
         noodle_machine.set_cause('v_left_hand', v_left_hand)
         noodle_machine.set_cause('v_mic', v_mic)
+
+    positions = motive.positions[motive.pos_idx-1]
+    # print(positions[:5])
+    velocities = motive.velocities[motive.pos_idx-1]
+    not_nan = ~np.isnan(positions.sum(axis=1))
+    positions = positions[not_nan]
+    velocities = velocities[not_nan]
     
-    if do_kinematics:
+    if False:
         # MOTIVE FOR PASTA tracking first
         # right_hand.update()
         # left_hand.update()
@@ -407,7 +445,7 @@ while True:
         #     times = np.array(motive.list_timestamps[motive.pos_idx-pos_history_range:motive.pos_idx]) / 1000
         # masses = np.ones(len(positions))
         
-        try:
+        if False:
             masses = 1
             # positions_l = position_history[pos_history_range//2]
             # positions_ll = position_history[0]
@@ -472,8 +510,8 @@ while True:
                 noodle_machine.set_cause('total_kinetic_energy', total_kinetic_energy)
                 # print(f'right_hand_y: {right_hand_y}')
                 # print(f'total_kinetic_energy: {total_kinetic_energy}')
-        except:
-            print('nothing coming from tracking')
+        # except:
+            # print('nothing coming from tracking')
     
     
     # REST
@@ -524,28 +562,41 @@ while True:
     max_embed_mods = midi_input.get("A2", val_min=0.3, val_max=2.5, val_default=0.8)
     if enable_embed_mod:
         
-        amp_embed_mod1 = midi_input.get(f"A5", val_min=0, val_max=max_embed_mods, val_default=0)
-        amp_embed_mod2 = midi_input.get(f"B5", val_min=0, val_max=max_embed_mods, val_default=0)
-        amp_embed_mod3 = midi_input.get(f"C5", val_min=0, val_max=max_embed_mods, val_default=0)
-        amp_embed_mod4 = midi_input.get(f"D5", val_min=0, val_max=max_embed_mods, val_default=0)
-        amp_embed_mod5 = midi_input.get(f"E5", val_min=0, val_max=max_embed_mods, val_default=0)
+        list_amp_embed_mods = []
+        for x in ["A", "B", "C", "D", "E"]:
+            list_amp_embed_mods.append(midi_input.get(f"{x}5", val_min=0, val_max=max_embed_mods, val_default=0))
+            # amp_embed_mod1 = midi_input.get(f"A5", val_min=0, val_max=max_embed_mods, val_default=0)
+            # amp_embed_mod2 = midi_input.get(f"B5", val_min=0, val_max=max_embed_mods, val_default=0)
+            # amp_embed_mod3 = midi_input.get(f"C5", val_min=0, val_max=max_embed_mods, val_default=0)
+            # amp_embed_mod4 = midi_input.get(f"D5", val_min=0, val_max=max_embed_mods, val_default=0)
+            # amp_embed_mod5 = midi_input.get(f"E5", val_min=0, val_max=max_embed_mods, val_default=0)
         
-        amp_embed_mod_left_hand = midi_input.get("F5", val_min=0, val_max=max_embed_mods, val_default=0)
-        amp_embed_mod_right_hand = midi_input.get("G5", val_min=0, val_max=max_embed_mods, val_default=0)
-        amp_embed_mod_mic = midi_input.get("H5", val_min=0, val_max=max_embed_mods, val_default=0)
+        # amp_embed_mod_left_hand = midi_input.get("F5", val_min=0, val_max=max_embed_mods, val_default=0)
+        # amp_embed_mod_right_hand = midi_input.get("G5", val_min=0, val_max=max_embed_mods, val_default=0)
+        # amp_embed_mod_mic = midi_input.get("H5", val_min=0, val_max=max_embed_mods, val_default=0)
         
+        nmb_mods = min(len(list_amp_embed_mods), len(list_bodyparts))
         weights_emb = []
-        weights_emb.append(amp_embed_mod1 * noodle_machine.get_effect("sound_embed_mod_1"))
-        weights_emb.append(amp_embed_mod2 * noodle_machine.get_effect("sound_embed_mod_2"))
-        weights_emb.append(amp_embed_mod3 * noodle_machine.get_effect("sound_embed_mod_3"))
-        weights_emb.append(amp_embed_mod4 * noodle_machine.get_effect("sound_embed_mod_4"))
-        weights_emb.append(amp_embed_mod5 * noodle_machine.get_effect("sound_embed_mod_5"))
-        
-        
         ks = 10
-        weights_emb.append(ks*amp_embed_mod_left_hand * noodle_machine.get_effect("sound_embed_mod_left_hand"))
-        weights_emb.append(ks*amp_embed_mod_right_hand * noodle_machine.get_effect("sound_embed_mod_right_hand"))
-        weights_emb.append(ks*amp_embed_mod_mic * noodle_machine.get_effect("sound_embed_mod_mic"))
+        for i in range(nmb_mods):
+            bodypart = list_bodyparts[i]
+            weights_emb.append(ks*list_amp_embed_mods[i] * noodle_machine.get_effect(f'embed_mod_{bodypart}'))
+            
+            
+            
+        # weights_emb.append(amp_embed_mod1 * noodle_machine.get_effect("sound_embed_mod_1"))
+        # weights_emb.append(amp_embed_mod2 * noodle_machine.get_effect("sound_embed_mod_2"))
+        # weights_emb.append(amp_embed_mod3 * noodle_machine.get_effect("sound_embed_mod_3"))
+        # weights_emb.append(amp_embed_mod4 * noodle_machine.get_effect("sound_embed_mod_4"))
+        # weights_emb.append(amp_embed_mod5 * noodle_machine.get_effect("sound_embed_mod_5"))
+        
+        
+        # for bodypart in rigid_bodies:
+        #     noodle_machine.create_noodle(f'v_{bodypart}', 'embed_mod_{bodypart}', init_value=1, do_auto_scale=False)
+            
+        # weights_emb.append(ks*amp_embed_mod_left_hand * noodle_machine.get_effect("embed_mod_left_hand"))
+        # weights_emb.append(ks*amp_embed_mod_right_hand * noodle_machine.get_effect("embed_mod_right_hand"))
+        # weights_emb.append(ks*amp_embed_mod_mic * noodle_machine.get_effect("embed_mod_mic"))
         
         embeds_mod_full = util.compute_mixed_embed(selected_embeds, weights_emb)
         total_weight = np.sum(np.asarray(weights_emb))
@@ -560,7 +611,7 @@ while True:
         
     
     d_fract_noise_gain = midi_input.get("A0", val_min=0.0, val_max=0.1, val_default=0.01)
-    d_fract_noise = d_fract_noise_gain * noodle_machine.get_effect('d_fract_noise_mod')
+    d_fract_noise = d_fract_noise_gain# * noodle_machine.get_effect('d_fract_noise_mod')
     
     d_fract_prompt = midi_input.get("A1", val_min=0.0, val_max=0.01, val_default=0)
     
@@ -617,7 +668,7 @@ while True:
     
     mask_radius = midi_input.get("E2", val_min=0, val_max=50, val_default=8)
     decay_rate = np.sqrt(midi_input.get("E0", val_min=0.0, val_max=1, val_default=0.62))
-    coord_scale = midi_input.get("E1", val_min=0.0, val_max=600, val_default=330)
+    coord_scale = midi_input.get("E1", val_min=0.0, val_max=600, val_default=150)
     drawing_intensity = midi_input.get("D2", val_min=0, val_max=1, val_default=0.9)
     use_underlay_image = midi_input.get("D3", button_mode="toggle")
     color_angle = midi_input.get("C2", val_min=0, val_max=7, val_default=0.55)
@@ -653,17 +704,21 @@ while True:
                 coord_array[:,1] = -coord_array[:,1]
                 coord_array[:,0] = -coord_array[:,0]
                 
-                coord_offset = np.array([180,230,280])[None]
+                # print(f'positions {positions}')
+                
+                coord_offset = np.array([320,340,280])[None]
                 if len(coord_array) > 0:
                     coord_array *= coord_scale
-                    coord_array[:,2] *= 1.2
+                    coord_array[:,1] *= 1.2
                     coord_array[:,0] *= 1.2
                     coord_array += coord_offset
                     
                     coord_array[coord_array < 0] = 0
                         
-                    coord_array[:,0][coord_array[:,0] >= sz_drawing[0]] = sz_drawing[0] - 1
-                    coord_array[:,2][coord_array[:,2] >= sz_drawing[1]] = sz_drawing[1] - 1
+                    coord_array[:,0][coord_array[:,0] >= sz_drawing[1]] = sz_drawing[1] - 1
+                    coord_array[:,1][coord_array[:,1] >= sz_drawing[0]] = sz_drawing[0] - 1
+                    
+                    # print(f'coord_array {coord_array}')
                     
                     coord_array = coord_array.astype(np.int32)
                     
@@ -680,7 +735,9 @@ while True:
                         color_vec = util.angle_to_rgb(color_angle)
                         color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
                         
-                        patch = util.draw_circular_patch(Y,X,coord[0], coord[2],mask_radius)
+                        mask_radius = coord[2] / 10
+                        
+                        patch = util.draw_circular_patch(Y,X,coord[1], coord[0], mask_radius)
                         if use_underlay_image:
                             colors = patch.unsqueeze(2)*color_vec[None][None]
                         else:
@@ -743,7 +800,7 @@ while True:
         mem_acid = mem_acid_base + mem_acid_gain * mem_acid_mod
         if mem_acid > 1:
             mem_acid = 1
-
+            
         rotation_angle_left = midi_input.get("C0", val_min=0, val_max=90, val_default=0)
         rotation_angle_right = midi_input.get("D0", val_min=0, val_max=90, val_default=0)
         rotation_angle = rotation_angle_left - rotation_angle_right
@@ -751,7 +808,7 @@ while True:
             rotation_angle = 360 + rotation_angle
         if prev_diffusion_output is not None:
             prev_diffusion_output = np.array(prev_diffusion_output)
-            prev_diffusion_output = np.roll(prev_diffusion_output, 2, axis=0)
+            # prev_diffusion_output = np.roll(prev_diffusion_output, 1, axis=0)
             if zoom_factor != 1 and not disable_zoom:
                 prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe_img2img.device)
                 prev_diffusion_output = util.zoom_image_torch(prev_diffusion_output, zoom_factor)
@@ -767,6 +824,57 @@ while True:
                 prev_diffusion_output = prev_diffusion_output[padding[0]:prev_diffusion_output.shape[0]-padding[0],padding[1]:prev_diffusion_output.shape[1]-padding[1]]
                 prev_diffusion_output = prev_diffusion_output.cpu().numpy()
                 
+            if do_acid_plane_transforms_by_tracking:
+                # shift_pos = rigid_bodies['left_hand'].positions[-1]
+                shift_pos = rigid_bodies['left_hand'].velocities[-1]
+                orientation = rigid_bodies['left_hand'].orientations[-1]
+                
+                if type(shift_pos) != int:
+                    # print(f'shift_pos {shift_pos}')
+                    
+                    # single rigid body mode
+                    euler_angle = util.euler_from_quaternion(*orientation)
+                    # print(f'euler_angle {euler_angle}')
+                    
+                    # amp_shift = 100 # positions
+                    amp_shift = 400  # velocities
+                    
+                    # positions
+                    # x_shift = -int(shift_pos[0]*amp_shift)
+                    # y_shift = -int((shift_pos[1]-1.5)*amp_shift)
+                    
+                    # velocies
+                    x_shift = -int(shift_pos[0]*amp_shift)
+                    y_shift = -int((shift_pos[1])*amp_shift)
+                    
+                    rotation_angle = -2*euler_angle[2]
+                    hue_rot = 50*euler_angle[1]
+                    
+                    zoom_factor = 1 + shift_pos[2]*2
+                    if zoom_factor < 0.25:
+                        zoom_factor = 0.25
+                    # print(f'x_shift {x_shift} y_shift {y_shift} zoom_factor {zoom_factor}')
+    
+                    prev_diffusion_output = torch.from_numpy(prev_diffusion_output).to(pipe_img2img.device)
+                    
+                    # scale
+                    try:
+                        prev_diffusion_output = util.zoom_image_torch(prev_diffusion_output, zoom_factor)
+                    except:
+                        pass
+                    
+                    # rotate
+                    padding = int(prev_diffusion_output.shape[1] // (2*np.sqrt(2)))
+                    padding = (padding, padding)
+                    prev_diffusion_output = T.Pad(padding=padding, padding_mode='reflect')(prev_diffusion_output.permute(2,0,1))
+                    prev_diffusion_output = T.functional.rotate(prev_diffusion_output, angle=rotation_angle, interpolation=T.functional.InterpolationMode.BILINEAR, expand=False).permute(1,2,0)
+                    prev_diffusion_output = prev_diffusion_output[padding[0]:prev_diffusion_output.shape[0]-padding[0],padding[1]:prev_diffusion_output.shape[1]-padding[1]]
+                    
+                    prev_diffusion_output = torch.roll(prev_diffusion_output, (y_shift, x_shift), (0,1))    
+                    prev_diffusion_output = prev_diffusion_output.cpu().numpy()
+            else:
+                hue_rot = 0
+            
             image_init = image_init.astype(np.float32) * (1-mem_acid) + mem_acid*prev_diffusion_output.astype(np.float32)
             image_init = image_init.astype(np.uint8)
             
@@ -789,6 +897,9 @@ while True:
     img_mix = np.array(img_mix)
     
     prev_diffusion_output = img_mix.astype(np.float32)
+    
+    if do_acid_plane_transforms_by_tracking:
+        img_mix = util.rotate_hue(img_mix, hue_rot)
     
     if do_fullscreen:
         cv2.namedWindow('lunar_render_window', cv2.WND_PROP_FULLSCREEN)
