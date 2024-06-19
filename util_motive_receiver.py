@@ -8,6 +8,7 @@ import threading
 import os
 import numpy as np
 import time
+from util import euler_from_quaternion
 
 os.chdir("/home/lugo/git/psychoactive_surface/")
 
@@ -63,16 +64,74 @@ class MarkerTracker:
         distance_dict = dict(sorted(distance_dict.items(), key=lambda item: item[1]))
         return distance_dict
 
-
     def process_velocities(self):
+        
         last_package = self.get_last()
         if last_package is not None:
+                # dict_unlabeled = last_package['unlabeled_markers'] 
+                # current_labels = dict_unlabeled.keys()
+            # xx
             if not last_package['frame_id'] == self.last_frame_id:
                 self.last_frame_id = last_package['frame_id'] 
                 timestamp = int(last_package['frame_id'])
                 self.list_timestamps.append(timestamp)
                 dict_unlabeled = last_package['unlabeled_markers'] 
+                # print(dict_unlabeled)
                 current_labels = dict_unlabeled.keys()
+                # new_positions = 
+                # import pdb; pdb.set_trace()
+                # if not self.list_labels:
+                self.list_labels = list(current_labels)[:self.max_nr_markers]
+                # self.set_labels = set(self.list_labels)
+                # print(len(self.list_labels))
+                new_positions = np.array([dict_unlabeled[k] for k in self.list_labels])
+                # print(new_positions)
+                if len(self.list_labels):
+                    self.positions[self.pos_idx,:len(self.list_labels),:] = new_positions
+                self.dict_label_idx = dict(zip(self.list_labels,range(len(current_labels))))
+                try:
+                    dt = (timestamp - self.last_timestamp)/1000
+                except:
+                    dt = 1
+                try:
+                    # self.velocities[self.pos_idx,list_known_idx,:] = (self.positions[self.pos_idx,list_known_idx,:] - self.positions[self.pos_idx-1,list_known_idx,:])/dt
+                    self.velocities[self.pos_idx,:,:] = (self.positions[self.pos_idx,:,:] - self.positions[self.pos_idx-1,:,:])/dt
+                except:
+                    self.velocities[self.pos_idx,:,:] = 0
+
+                            
+                # dict_unlabeled_last = dict_unlabeled
+                # self.list_labels = list(self.dict_label_idx.keys())
+                self.list_unlabeled.append(dict_unlabeled)
+                #print(self.positions[self.pos_idx])
+                self.pos_idx += 1
+                self.last_timestamp = timestamp
+                if self.pos_idx >= self.max_buffer_size:
+                    print('cleaning buffer')
+                    self.pos_idx = self.pos_idx // 2
+                    self.list_unlabeled = self.list_unlabeled[self.pos_idx:]
+                    self.list_timestamps = self.list_timestamps[self.pos_idx:]
+                    positions_old = np.copy(self.positions)
+                    velocities_old = np.copy(self.velocities)
+                    self.positions = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])*np.nan
+                    self.velocities = np.zeros([self.max_buffer_size, self.max_nr_markers, 3])
+                    self.positions[:self.pos_idx] = positions_old[-self.pos_idx:]
+                    self.velocities[:self.pos_idx] = velocities_old[-self.pos_idx:]
+        
+    def process_velocities_broken(self):
+        last_package = self.get_last()
+        if last_package is not None:
+                # dict_unlabeled = last_package['unlabeled_markers'] 
+                # current_labels = dict_unlabeled.keys()
+            # xx
+            if not last_package['frame_id'] == self.last_frame_id:
+                self.last_frame_id = last_package['frame_id'] 
+                timestamp = int(last_package['frame_id'])
+                self.list_timestamps.append(timestamp)
+                dict_unlabeled = last_package['unlabeled_markers'] 
+                # print(dict_unlabeled)
+                current_labels = dict_unlabeled.keys()
+                # new_positions = 
                 # import pdb; pdb.set_trace()
                 if not self.list_labels:
                     self.list_labels = list(current_labels)[:self.max_nr_markers]
@@ -203,6 +262,7 @@ class MarkerTracker:
                 if "velocities" in self.process_list:
                     time_new = time.time()
                     dt = time_new - self.v_last_time
+                    
                     if dt > self.v_sampling_time:
                         self.v_last_time = time_new
                         self.process_velocities()
@@ -325,60 +385,7 @@ class MarkerTracker:
                 unlabeled_markers[marker_id] = position
         return unlabeled_markers    
     
-    # def extract_skeletons(self, data):
-    #     unlabeled_markers = {}
-    #     for line in data:
-    #         if "Unlabeled Marker" in line:
-    #             # Extract MarkerID and position more accurately
-    #             marker_id_part = line.split('MarkerID=')[1]
-    #             marker_id = int(marker_id_part.split(']')[0].strip())
-    
-    #             pos_part = line.split('pos=')[1]
-    #             position_str = pos_part.split(']')[0].strip()
-    #             position = [float(num) for num in position_str.split(',')]
-    
-    #             unlabeled_markers[marker_id] = position
-    #     return unlabeled_markers    
-    
-    # def get_key_measurements(self):
-    #     xm = motive.get_last()['unlabeled_markers']
-    #     positions = np.array(list(xm.values()))
-        
-    #     masses = np.abs(np.random.randn(len(positions),1))
-    #     masses = 70 * masses / masses.sum()
-    #     total_mass = masses.sum()
-        
-    #     dict_output = {}
-        
-    #     try:
-    #         # positions = coords
-    #         list_positions.append(positions)
-    #         try: 
-    #             velocities = list_positions[-1] - list_positions[-2]
-    #         except:
-    #             velocities = positions * 0
-    #         list_velocities.append(velocities)
-    #         try:
-    #             accelerations = list_velocities[-1] - list_velocities[-2]
-    #         except:
-    #             accelerations = velocities * 0
-    #         forces = masses * accelerations
-    #         dict_output['center_of_mass'] = np.average(positions, axis=0, weights=masses[:,0])
-    #         # center_of_mass = np.average(positions, axis=0)
-    #         potential_energy = dict_output['center_of_mass'] * total_mass # check xy
-    #         rel_positions = positions - dict_output['center_of_mass']
-    #         momenta = masses * velocities
-    #         angular_momenta = np.cross(rel_positions, momenta) # gives scales for 2D!
-    #         dict_output['total_angular_momentum'] = angular_momenta.sum(axis=0)
-            
-    #         kinetic_energies = 0.5 * masses * np.linalg.norm(velocities, axis=1)**2
-    #         dict_output['total_kinetic_energy'] = kinetic_energies.sum(axis=0)
-            
-    #         print(f"total_kinetic_energy {dict_output['total_kinetic_energy']}")
-    #     except Exception as E:
-    #         print(f'fail {E}')
-            
-    #     return dict_output
+
 
     def stop(self):
         print("stopping process!")
@@ -446,24 +453,21 @@ class RigidBody:
         self.motive = motive
         self.label = label
         self.orientations = []
+        self.euler_angles = []
+        self.angular_velocities = []
         self.positions = []
-        self.velocities = []
-        self.accelerations = []
+        self.velocities = [0]
+        self.accelerations = [0]
         self.forces = []
         self.kinetic_energies = []
         self.mass = mass
-        self.pos = None
         self.buffer_size = 1000  # Define the buffer size for positions, velocities, accelerations, forces, and kinetic energies
 
-    def updatexxx(self):
-        try:
-            self.pos = self.motive.list_dict_packets[-1]['rigid_bodies'][self.label]['position']
-        except Exception as e:
-            pass
+
         
 
     def update(self, mean_samples=1):
-        
+        self.check_buffer_overflow()
         if mean_samples == 1:
             rigid_bodies_data = self.motive.get_last("rigid_bodies")
         else:
@@ -478,10 +482,13 @@ class RigidBody:
             self.positions.append(position)
             orientation = np.array(body_data['orientation'])
             self.orientations.append(orientation)
+            self.euler_angles.append(euler_from_quaternion(*orientation))
 
             if len(self.positions) > 1:
                 velocity = self.positions[-1] - self.positions[-2]
                 self.velocities.append(velocity)
+                angular_velocity = self.euler_angles[-1] - self.euler_angles[-2]
+                self.angular_velocities.append(angular_velocity)
                 if len(self.velocities) > 1:
                     acceleration = self.velocities[-1] - self.velocities[-2]
                     self.accelerations.append(acceleration)
@@ -493,6 +500,7 @@ class RigidBody:
             else:
                 try:
                     last_velocity = self.velocities[-1] if self.velocities else np.array([0, 0, 0])
+                    last_angular_velocity = self.angular_velocities[-1] if self.angular_velocities else np.array([0, 0, 0])
                     last_acceleration = self.accelerations[-1] if self.accelerations else np.array([0, 0, 0])
                     last_force = self.forces[-1] if self.forces else np.array([0, 0, 0])
                     last_kinetic_energy = self.kinetic_energies[-1] if self.kinetic_energies else 0
@@ -502,22 +510,31 @@ class RigidBody:
                     last_force = np.array([0, 0, 0])
                     last_kinetic_energy = 0
 
-                
-                if len(self.positions) > self.buffer_size:
-                    self.positions.pop(0)
-                if len(self.velocities) > self.buffer_size:
-                    self.velocities.pop(0)
-                if len(self.accelerations) > self.buffer_size:
-                    self.accelerations.pop(0)
-                if len(self.forces) > self.buffer_size:
-                    self.forces.pop(0)
-                if len(self.kinetic_energies) > self.buffer_size:
-                    self.kinetic_energies.pop(0)
-
                 self.velocities.append(last_velocity)
+                self.angular_velocities.append(last_angular_velocity)
                 self.accelerations.append(last_acceleration)
                 self.forces.append(last_force)
                 self.kinetic_energies.append(last_kinetic_energy)
+
+
+        else:
+            print(f'rigid body "{self.label}" not detected')
+
+        
+    def check_buffer_overflow(self):
+        if len(self.positions) > self.buffer_size:
+            self.positions.pop(0)
+        if len(self.velocities) > self.buffer_size:
+            self.velocities.pop(0)
+        if len(self.angular_velocities) > self.buffer_size:
+            self.angular_velocities.pop(0)
+        if len(self.accelerations) > self.buffer_size:
+            self.accelerations.pop(0)
+        if len(self.forces) > self.buffer_size:
+            self.forces.pop(0)
+        if len(self.kinetic_energies) > self.buffer_size:
+            self.kinetic_energies.pop(0)
+
 
 def compute_sq_distances(a, b):
     # Calculate differences using broadcasting
@@ -534,24 +551,25 @@ def compute_sq_distances(a, b):
 
 
 if __name__ == "__main__":
-    motive = MarkerTracker('192.168.50.64', process_list=['rigid_bodies', 'unlabeled markers', 'labeled_markers'])
+    motive = MarkerTracker('10.40.48.84', process_list=['rigid_bodies', 'unlabeled markers', 'labeled_markers', 'velocities'])
+    # motive = MarkerTracker('10.40.48.84', process_list=['rigid_bodies', ])
     
     left_hand = RigidBody(motive, "left_hand")
-    right_hand = RigidBody(motive, "right_hand")
-    mic = RigidBody(motive, "mic")
+    # left_hand = RigidBody(motive, "left_hand")
+    # right_hand = RigidBody(motive, "right_hand")
+    # mic = RigidBody(motive, "mic")
     
     while True:
-        right_hand.update()
+        # right_hand.update()
+        # print(motive.get_last())
         left_hand.update()
-        mic.update()
-        try:
-            v_right_hand = np.linalg.norm(right_hand.velocities[-1])
-            v_left_hand = np.linalg.norm(left_hand.velocities[-1])
-            v_mic = np.linalg.norm(mic.velocities[-1])
-        except Exception as e:
-            v_right_hand = 0
-            v_left_hand = 0
-            v_mic = 0
-            
-        print(f"{v_right_hand} {v_left_hand} {v_mic}")
+        # mic.update()
+        # v_right_hand = np.linalg.norm(right_hand.velocities[-1])
+        # v_left_hand = np.linalg.norm(left_hand.velocities[-1])
+        # v_mic = np.linalg.norm(mic.velocities[-1])
+        # print(f"v_left_hand: {v_left_hand}")
+        # print(f"{v_right_hand} {v_left_hand} {v_mic}")
+        # print(left_hand.positions)
+        # print(left_hand.velocities)
+        # print(motive.positions[motive.pos_idx-1,:5,:])
         time.sleep(0.1)

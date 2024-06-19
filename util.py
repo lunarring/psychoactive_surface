@@ -10,7 +10,7 @@ import kornia
 import cv2
 import colorsys
 import torch.nn.functional as F
-from image_processing import multi_match_gpu
+import math
 
 from sklearn.cluster import KMeans
 from sklearn.ensemble import IsolationForest
@@ -442,3 +442,66 @@ def compute_mixed_embed(selected_embeds, weights):
                 emb += selected_embeds[j][i] * weights[j]
         embeds_mod_full.append(emb)
     return embeds_mod_full
+
+def draw_circular_patch(Y,X,y,x, brush_size):
+    # Calculate the distance from the center (x, y)
+    distance = ((X - x) ** 2 + (Y - y) ** 2).float().sqrt()
+    
+    mask = distance > brush_size
+    patch = brush_size - distance
+    patch[mask] = 0
+    # distance = 1 / (distance + 1e-3)
+    # distance[distance < brush_size] = 0
+    
+    return patch       
+
+def euler_from_quaternion(x, y, z, w):
+    """
+    Convert a quaternion into euler angles (roll, pitch, yaw)
+    roll is rotation around x in radians (counterclockwise)
+    pitch is rotation around y in radians (counterclockwise)
+    yaw is rotation around z in radians (counterclockwise)
+    """
+    t0 = +2.0 * (w * x + y * z)
+    t1 = +1.0 - 2.0 * (x * x + y * y)
+    roll_x = math.atan2(t0, t1)
+ 
+    t2 = +2.0 * (w * y - z * x)
+    t2 = +1.0 if t2 > +1.0 else t2
+    t2 = -1.0 if t2 < -1.0 else t2
+    pitch_y = math.asin(t2)
+ 
+    t3 = +2.0 * (w * z + x * y)
+    t4 = +1.0 - 2.0 * (y * y + z * z)
+    yaw_z = math.atan2(t3, t4)
+    
+    euler_angles = np.array([roll_x, pitch_y, yaw_z])
+ 
+    return euler_angles # in radians
+    
+    
+def desaturate(img, percent):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h,s,v = cv2.split(hsv)
+    
+    # desaturate
+    s_desat = cv2.multiply(s, percent).astype(np.uint8)
+    hsv_new = cv2.merge([h,s_desat,v])
+    bgr_desat = cv2.cvtColor(hsv_new, cv2.COLOR_HSV2BGR)
+    
+    # create 1D LUT for green
+    # (120 out of 360) = (60 out of 180)  +- 25
+    lut = np.zeros((1,256), dtype=np.uint8)
+    white = np.full((1,50), 255, dtype=np.uint8)
+    lut[0:1, 35:85] = white
+    
+    # apply lut to hue channel as mask
+    mask = cv2.LUT(h, lut)
+    mask = mask.astype(np.float32) / 255
+    mask = cv2.merge([mask,mask,mask])
+    
+    # mask bgr_desat and img
+    result = mask * bgr_desat + (1 - mask)*img
+    result = result.clip(0,255).astype(np.uint8)
+    
+    return result
