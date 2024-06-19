@@ -463,11 +463,13 @@ class RigidBody:
         self.mass = mass
         self.buffer_size = 1000  # Define the buffer size for positions, velocities, accelerations, forces, and kinetic energies
 
+        self.corners_x = [3.1, -3.5]
+        self.corners_z = [-2.1, 3.1]
+        self.fract_xz = np.zeros(2)
 
-        
 
     def update(self, mean_samples=1):
-        self.check_buffer_overflow()
+
         if mean_samples == 1:
             rigid_bodies_data = self.motive.get_last("rigid_bodies")
         else:
@@ -519,8 +521,23 @@ class RigidBody:
 
         else:
             print(f'rigid body "{self.label}" not detected')
+            
+        self.check_buffer_overflow()
+        self.get_xy_fract()
+            
 
-        
+    def get_xy_fract(self):
+        if len(self.positions) > 1:
+            current_x = self.positions[-1][0]
+            current_z = self.positions[-1][2]
+
+            self.fract_xz[0] = get_fract(self.corners_x[0], self.corners_x[1], current_x)
+            self.fract_xz[1] = get_fract(self.corners_z[0], self.corners_z[1], current_z)
+
+            
+
+
+
     def check_buffer_overflow(self):
         if len(self.positions) > self.buffer_size:
             self.positions.pop(0)
@@ -535,6 +552,25 @@ class RigidBody:
         if len(self.kinetic_energies) > self.buffer_size:
             self.kinetic_energies.pop(0)
 
+
+def get_fract(val_fract0, val_fract1, val):
+    do_swap = False
+    # Check if val_fract0 is larger than val_fract1
+    if val_fract0 > val_fract1:
+        do_swap = True
+        val_fract0, val_fract1 = val_fract1, val_fract0
+
+    # Check if val is within the range of val_fract0 and val_fract1
+    if val_fract0 <= val <= val_fract1:
+        # Calculate the fraction of the distance val is between val_fract0 and val_fract1
+        fract = (val - val_fract0) / (val_fract1 - val_fract0)
+    else:
+        # If val is outside the range, return 0 or 1 depending on which side it's closer to
+        fract = 0 if val < val_fract0 else 1
+
+    if do_swap:
+        fract = 1-fract
+    return fract
 
 def compute_sq_distances(a, b):
     # Calculate differences using broadcasting
@@ -563,6 +599,10 @@ if __name__ == "__main__":
         # right_hand.update()
         # print(motive.get_last())
         left_hand.update()
+        # if len(left_hand.fract_xz) > 1:
+        print(left_hand.fract_xz)
+
+        
         # mic.update()
         # v_right_hand = np.linalg.norm(right_hand.velocities[-1])
         # v_left_hand = np.linalg.norm(left_hand.velocities[-1])
@@ -573,3 +613,8 @@ if __name__ == "__main__":
         # print(left_hand.velocities)
         # print(motive.positions[motive.pos_idx-1,:5,:])
         time.sleep(0.1)
+        
+        # left close -- 3.2, 1.4, 3.2
+        # left far -- 3.0, 1.3, -1.1
+        # right close -- -3.5, 1.3, 3.07
+        # right far -- -3.4, 1.3, -2.5
