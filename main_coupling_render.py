@@ -7,8 +7,8 @@ Created on Tue Mar  5 15:26:28 2024
 """
 
 import sys
-sys.path.append('../')
-sys.path.append("../garden4")
+# sys.path.append('../')
+# sys.path.append("../garden4")
 import numpy as np
 import lunar_tools as lt
 import random
@@ -24,7 +24,7 @@ from u_unet_modulated import forward_modulated
 from PIL import Image
 import os
 import cv2
-from image_processing import multi_match_gpu
+from util import multi_match_gpu
 from util_motive_receiver import MarkerTracker, RigidBody
 import torchvision.transforms as T
 import util
@@ -38,7 +38,7 @@ REFACTOR OPS
 - embeds mod motchie!
 """
 #%% VARS
-do_compile = True
+do_compile = False
 res_fact = 1.2
 width_latents = int(96*res_fact)
 height_latents = int(64*res_fact)
@@ -59,7 +59,6 @@ do_acid_plane_transforms_by_tracking = True
 # key keys: G3 -> F3 -> F0 -> C5 -> G1 -> G2
 
 # AUTO VARS
-
 width_latents = int(np.round(width_latents/16)*16)
 height_latents = int(np.round(height_latents/16)*16)
 shape_cam=(600,800) 
@@ -539,7 +538,7 @@ while True:
     if show_osc_visualization:
         receiver.show_visualization()
         
-    use_image2image = midi_input.get("G3", button_mode="toggle")
+    use_image2image = not midi_input.get("G3", button_mode="toggle")
     
     # print(f'receiver messages: {receiver.dict_messages}')
     # update oscs
@@ -735,7 +734,7 @@ while True:
                         color_vec = util.angle_to_rgb(color_angle)
                         color_vec = torch.from_numpy(np.array(color_vec)).float().cuda(canvas.device)
                         
-                        mask_radius = coord[2] / 10
+                        # mask_radius = coord[2] / 10
                         
                         patch = util.draw_circular_patch(Y,X,coord[1], coord[0], mask_radius)
                         if use_underlay_image:
@@ -791,10 +790,6 @@ while True:
         image_init = image_init.astype(np.float32)
         image_init *= image_inlay_gain
         
-        image_init = image_init + diffusion_noise*noise_cam
-        image_init = np.clip(image_init, 0, 255)
-        image_init = image_init.astype(np.uint8)
-        
         mem_acid_mod = noodle_machine.get_effect('mem_acid_mod')
         
         mem_acid = mem_acid_base + mem_acid_gain * mem_acid_mod
@@ -827,17 +822,18 @@ while True:
             if do_acid_plane_transforms_by_tracking:
                 # shift_pos = rigid_bodies['left_hand'].positions[-1]
                 shift_pos = rigid_bodies['left_hand'].velocities[-1]
-                orientation = rigid_bodies['left_hand'].orientations[-1]
+                angular_velocity = rigid_bodies['left_hand'].angular_velocities[-1]
                 
                 if type(shift_pos) != int:
                     # print(f'shift_pos {shift_pos}')
                     
                     # single rigid body mode
-                    euler_angle = util.euler_from_quaternion(*orientation)
+                    # euler_angle = util.euler_from_quaternion(*orientation)
                     # print(f'euler_angle {euler_angle}')
                     
                     # amp_shift = 100 # positions
-                    amp_shift = 400  # velocities
+                    amp_shift = 1000  # velocities
+                    amp_rotation = 30  # velocities
                     
                     # positions
                     # x_shift = -int(shift_pos[0]*amp_shift)
@@ -847,8 +843,8 @@ while True:
                     x_shift = -int(shift_pos[0]*amp_shift)
                     y_shift = -int((shift_pos[1])*amp_shift)
                     
-                    rotation_angle = -2*euler_angle[2]
-                    hue_rot = 50*euler_angle[1]
+                    rotation_angle = -amp_rotation*angular_velocity[2]
+                    # hue_rot = 50*euler_angle[1]
                     
                     zoom_factor = 1 + shift_pos[2]*2
                     if zoom_factor < 0.25:
@@ -876,7 +872,8 @@ while True:
                 hue_rot = 0
             
             image_init = image_init.astype(np.float32) * (1-mem_acid) + mem_acid*prev_diffusion_output.astype(np.float32)
-            image_init = image_init.astype(np.uint8)
+            image_init = image_init + diffusion_noise*noise_cam
+            image_init = np.clip(image_init, 0, 255)     
             
             if do_color_matching:
                 image_init_torch = torch.Tensor(image_init).cuda()
@@ -884,6 +881,7 @@ while True:
                 image_init_torch_matched, _ = multi_match_gpu([image_init_torch, prev_diffusion_output_torch], weights=[1-color_matching, color_matching], simple=False, clip_max=255, gpu=0,  is_input_tensor=True)
                 image_init = image_init_torch_matched.cpu().numpy().astype(np.uint8)
         
+        image_init = image_init.astype(np.uint8)
         kwargs['image'] = Image.fromarray(image_init)
         
         img_mix = pipe_img2img(**kwargs).images[0]
